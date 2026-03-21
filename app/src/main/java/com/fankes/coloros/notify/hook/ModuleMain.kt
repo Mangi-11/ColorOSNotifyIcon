@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
+import android.os.SystemClock
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import android.widget.ImageView
@@ -36,6 +37,10 @@ class ModuleMain : XposedModule() {
     private var systemServerSnapshot = ConfigData.defaultHookSnapshot()
     private var systemUiSnapshot = ConfigData.defaultHookSnapshot()
     private var systemUiRules: Map<String, IconDataBean> = emptyMap()
+    @Volatile
+    private var systemServerConfigVersion = -1L
+    @Volatile
+    private var systemServerLastRefreshAt = 0L
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         emitLog(
@@ -47,6 +52,8 @@ class ModuleMain : XposedModule() {
     override fun onSystemServerStarting(param: SystemServerStartingParam) {
         if (systemServerInstalled) return
         systemServerSnapshot = ConfigData.readHookSnapshot(remotePrefsOrNull())
+        systemServerConfigVersion = remotePrefsOrNull()?.getLong(ConfigData.KEY_CONFIG_UPDATED_AT, 0L) ?: 0L
+        systemServerLastRefreshAt = SystemClock.elapsedRealtime()
         systemServerInstalled = installSystemServerHook(param.classLoader)
     }
 
@@ -86,6 +93,7 @@ class ModuleMain : XposedModule() {
         ) ?: return warnAndFalse("system.fix.method", "未找到 fixSmallIcon(Notification, String, String, boolean)")
 
         hook(fixSmallIconMethod).intercept { chain ->
+            refreshSystemServerConfigIfNeeded()
             if (!systemServerSnapshot.moduleEnabled || !systemServerSnapshot.iconEnhancementEnabled) {
                 return@intercept chain.proceed()
             }
@@ -106,6 +114,21 @@ class ModuleMain : XposedModule() {
             "system_server Hook 已安装：fixSmallIcon 原始图标缓存, module=${systemServerSnapshot.moduleEnabled}, enhancement=${systemServerSnapshot.iconEnhancementEnabled}"
         )
         return true
+    }
+
+    private fun refreshSystemServerConfigIfNeeded(force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - systemServerLastRefreshAt < 1_000L) return
+        systemServerLastRefreshAt = now
+        val remotePrefs = remotePrefsOrNull() ?: return
+        val remoteVersion = remotePrefs.getLong(ConfigData.KEY_CONFIG_UPDATED_AT, 0L)
+        if (!force && remoteVersion == systemServerConfigVersion) return
+        systemServerSnapshot = ConfigData.readHookSnapshot(remotePrefs)
+        systemServerConfigVersion = remoteVersion
+        infoOnce(
+            "system.fix.reload",
+            "system_server 配置已刷新：module=${systemServerSnapshot.moduleEnabled}, enhancement=${systemServerSnapshot.iconEnhancementEnabled}"
+        )
     }
 
     private fun installSystemUiHooks(classLoader: ClassLoader): Boolean {
@@ -206,6 +229,7 @@ class ModuleMain : XposedModule() {
     }
 
     private fun resolveTargetIcon(context: Context, sbn: StatusBarNotification): ResolvedIcon? {
+        if (!systemUiSnapshot.moduleEnabled || !systemUiSnapshot.iconEnhancementEnabled) return null
         val packageName = sbn.packageName.orEmpty()
         val preservedOriginalIcon = runCatching {
             sbn.notification.extras.getParcelable(EXTRA_ORIGINAL_SMALL_ICON) as? Icon

@@ -32,6 +32,7 @@ object FrameworkServiceBridge {
                         apiVersion = service.apiVersion,
                         scopes = service.scope,
                     )
+                    RemoteConfigSyncTool.syncIfPending(service)
                     notifyListeners(service)
                 }
 

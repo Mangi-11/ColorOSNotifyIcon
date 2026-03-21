@@ -18,11 +18,13 @@ object ConfigData {
     const val KEY_RULES_JSON = "rules_json"
     const val KEY_RULES_COUNT = "rules_count"
     const val KEY_RULES_UPDATED_AT = "rules_updated_at"
+    const val KEY_CONFIG_UPDATED_AT = "config_updated_at"
     const val KEY_LAST_FRAMEWORK_NAME = "last_framework_name"
     const val KEY_LAST_FRAMEWORK_VERSION = "last_framework_version"
     const val KEY_LAST_FRAMEWORK_API = "last_framework_api"
     const val KEY_LAST_SCOPE_LIST = "last_scope_list"
     const val KEY_LAST_FRAMEWORK_CONNECTED_AT = "last_framework_connected_at"
+    private const val KEY_LAST_REMOTE_MIRRORED_AT = "last_remote_mirrored_at"
 
     private lateinit var appContext: Context
 
@@ -44,6 +46,7 @@ object ConfigData {
     fun initialize(context: Context) {
         if (!::appContext.isInitialized) appContext = context.applicationContext
         cleanupLegacyStyleKeys()
+        ensureSyncMetadata()
     }
 
     private val prefs: SharedPreferences
@@ -54,11 +57,11 @@ object ConfigData {
 
     var isModuleEnabled: Boolean
         get() = prefs.getBoolean(KEY_MODULE_ENABLED, true)
-        set(value) = prefs.edit().putBoolean(KEY_MODULE_ENABLED, value).apply()
+        set(value) = updateBoolean(KEY_MODULE_ENABLED, value, true)
 
     var isIconEnhancementEnabled: Boolean
         get() = prefs.getBoolean(KEY_ICON_ENHANCEMENT_ENABLED, true)
-        set(value) = prefs.edit().putBoolean(KEY_ICON_ENHANCEMENT_ENABLED, value).apply()
+        set(value) = updateBoolean(KEY_ICON_ENHANCEMENT_ENABLED, value, true)
 
     var rulesJson: String
         get() = prefs.getString(KEY_RULES_JSON, "").orEmpty()
@@ -72,10 +75,20 @@ object ConfigData {
         get() = prefs.getLong(KEY_RULES_UPDATED_AT, 0L)
         private set(value) = prefs.edit().putLong(KEY_RULES_UPDATED_AT, value).apply()
 
+    val localConfigUpdatedAt: Long
+        get() = prefs.getLong(KEY_CONFIG_UPDATED_AT, 0L)
+
+    val hasPendingRemoteSync: Boolean
+        get() = localConfigUpdatedAt > prefs.getLong(KEY_LAST_REMOTE_MIRRORED_AT, 0L)
+
     fun updateRules(json: String, updatedAt: Long = System.currentTimeMillis()) {
-        rulesJson = json
-        rulesCount = parseRules(json).size
-        rulesUpdatedAt = updatedAt
+        val count = parseRules(json).size
+        prefs.edit()
+            .putString(KEY_RULES_JSON, json)
+            .putInt(KEY_RULES_COUNT, count)
+            .putLong(KEY_RULES_UPDATED_AT, updatedAt)
+            .putLong(KEY_CONFIG_UPDATED_AT, updatedAt)
+            .apply()
     }
 
     fun updateFrameworkSnapshot(
@@ -112,7 +125,12 @@ object ConfigData {
         .remove(LEGACY_KEY_ICON_CORNER_DP)
         .putInt(KEY_RULES_COUNT, rulesCount)
         .putLong(KEY_RULES_UPDATED_AT, rulesUpdatedAt)
+        .putLong(KEY_CONFIG_UPDATED_AT, localConfigUpdatedAt)
         .commit()
+
+    fun markRemoteMirrorSuccess(configUpdatedAt: Long = localConfigUpdatedAt) {
+        prefs.edit().putLong(KEY_LAST_REMOTE_MIRRORED_AT, configUpdatedAt).apply()
+    }
 
     fun readHookSnapshot(remotePrefs: SharedPreferences?): HookSnapshot {
         if (remotePrefs == null) return defaultHookSnapshot()
@@ -142,6 +160,30 @@ object ConfigData {
         prefs.edit()
             .remove(LEGACY_KEY_MD3_STYLE_ENABLED)
             .remove(LEGACY_KEY_ICON_CORNER_DP)
+            .apply()
+    }
+
+    private fun ensureSyncMetadata() {
+        if (prefs.contains(KEY_CONFIG_UPDATED_AT)) return
+        val hasExistingConfig = prefs.contains(KEY_MODULE_ENABLED) ||
+            prefs.contains(KEY_ICON_ENHANCEMENT_ENABLED) ||
+            prefs.contains(KEY_RULES_JSON) ||
+            prefs.contains(KEY_RULES_COUNT) ||
+            prefs.contains(KEY_RULES_UPDATED_AT)
+        if (!hasExistingConfig) return
+        val fallbackUpdatedAt = prefs.getLong(KEY_RULES_UPDATED_AT, 0L).takeIf { it > 0L }
+            ?: System.currentTimeMillis()
+        prefs.edit()
+            .putLong(KEY_CONFIG_UPDATED_AT, fallbackUpdatedAt)
+            .apply()
+    }
+
+    private fun updateBoolean(key: String, value: Boolean, defaultValue: Boolean) {
+        val current = prefs.getBoolean(key, defaultValue)
+        if (current == value) return
+        prefs.edit()
+            .putBoolean(key, value)
+            .putLong(KEY_CONFIG_UPDATED_AT, System.currentTimeMillis())
             .apply()
     }
 }

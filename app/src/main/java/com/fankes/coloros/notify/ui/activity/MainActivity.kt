@@ -12,35 +12,32 @@ import com.fankes.coloros.notify.data.ConfigData
 import com.fankes.coloros.notify.databinding.ActivityMainBinding
 import com.fankes.coloros.notify.utils.tool.FrameworkServiceBridge
 import com.fankes.coloros.notify.utils.tool.IconRuleManagerTool
+import com.fankes.coloros.notify.utils.tool.RemoteConfigSyncTool
 import com.fankes.coloros.notify.utils.tool.SystemUiControl
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.shape.MaterialShapeDrawable
 import com.google.android.material.shape.ShapeAppearanceModel
 import io.github.libxposed.service.XposedService
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
-    private data class RemoteMirrorResult(
-        val rulesCount: Int,
-        val payloadBytes: Int,
-    )
-
     private lateinit var binding: ActivityMainBinding
     private var service: XposedService? = null
-    private val remoteSyncExecutor = Executors.newSingleThreadExecutor()
     private val frameworkListener = object : FrameworkServiceBridge.Listener {
         override fun onServiceChanged(service: XposedService?) {
             this@MainActivity.service = service
             runOnUiThread {
-                if (service != null) mirrorToRemoteStore(showErrors = false)
-                updateStatus()
+                if (service != null && ConfigData.hasPendingRemoteSync) {
+                    mirrorToRemoteStore(showErrors = false) {
+                        updateStatus()
+                    }
+                } else {
+                    updateStatus()
+                }
             }
         }
     }
@@ -70,7 +67,7 @@ class MainActivity : AppCompatActivity() {
             ConfigData.isModuleEnabled = isChecked
             ConfigData.isIconEnhancementEnabled = isChecked
             refreshSettingState()
-            mirrorToRemoteStore()
+            mirrorToRemoteStore(showErrors = false)
             updateStatus()
             showRestartHint()
         }
@@ -130,67 +127,62 @@ class MainActivity : AppCompatActivity() {
 
     private fun performRestartSystemUi() {
         binding.restartSystemUiButton.isEnabled = false
+        if (service == null && ConfigData.hasPendingRemoteSync) {
+            binding.restartSystemUiButton.isEnabled = true
+            showMessage("当前未连接 modern Xposed 框架，设置已保存到本地；待框架恢复后会自动同步，再重启一次 SystemUI 即可")
+            updateStatus()
+            return
+        }
+        if (service == null) {
+            restartSystemUiDirectly()
+            return
+        }
         mirrorToRemoteStore(showErrors = false) { mirrorResult ->
             mirrorResult.onSuccess {
-                SystemUiControl.restartSystemUi { result ->
-                    binding.restartSystemUiButton.isEnabled = true
-                    result.onSuccess {
-                        showMessage("已请求重启 SystemUI")
-                    }.onFailure {
-                        showMessage("重启失败：${it.message ?: it.javaClass.simpleName}")
-                    }
-                }
+                restartSystemUiDirectly()
             }.onFailure {
                 binding.restartSystemUiButton.isEnabled = true
-                showMessage("重启前配置镜像失败：${it.message ?: it.javaClass.simpleName}")
+                showMessage("配置尚未同步到框架：${it.message ?: it.javaClass.simpleName}")
+                updateStatus()
+            }
+        }
+    }
+
+    private fun restartSystemUiDirectly() {
+        SystemUiControl.restartSystemUi { result ->
+            binding.restartSystemUiButton.isEnabled = true
+            result.onSuccess {
+                showMessage("已请求重启 SystemUI")
+            }.onFailure {
+                showMessage("重启失败：${it.message ?: it.javaClass.simpleName}")
             }
         }
     }
 
     private fun mirrorToRemoteStore(
         showErrors: Boolean = true,
-        onResult: ((Result<RemoteMirrorResult>) -> Unit)? = null,
+        onResult: ((Result<RemoteConfigSyncTool.SyncResult>) -> Unit)? = null,
     ) {
         val currentService = service
         if (currentService == null) {
-            val error = IllegalStateException("未连接 modern Xposed 框架")
+            val error = IllegalStateException(
+                if (ConfigData.hasPendingRemoteSync) {
+                    "未连接 modern Xposed 框架，本地修改待自动同步"
+                } else {
+                    "未连接 modern Xposed 框架"
+                }
+            )
             if (showErrors) showMessage(error.message ?: "配置镜像失败")
             onResult?.invoke(Result.failure(error))
+            updateStatus()
             return
         }
-        remoteSyncExecutor.execute {
-            val result = runCatching {
-                val remotePrefs = currentService.getRemotePreferences(ConfigData.GROUP_CONFIG)
-                val committed = ConfigData.mirrorTo(remotePrefs)
-                check(committed) { "远程偏好设置提交失败" }
-                val payload = ConfigData.rulesJson.toByteArray(Charsets.UTF_8)
-                currentService.openRemoteFile(ConfigData.RULES_FILE_NAME).use { pfd ->
-                    FileOutputStream(pfd.fileDescriptor).use { output ->
-                        output.channel.truncate(0)
-                        output.write(payload)
-                        output.flush()
-                        output.fd.sync()
-                    }
-                }
-                val mirroredCount = remotePrefs.getInt(ConfigData.KEY_RULES_COUNT, -1)
-                check(mirroredCount == ConfigData.rulesCount) {
-                    "远程规则数量不一致：local=${ConfigData.rulesCount}, remote=$mirroredCount"
-                }
-                val mirroredJson = currentService.openRemoteFile(ConfigData.RULES_FILE_NAME).use { pfd ->
-                    FileInputStream(pfd.fileDescriptor).bufferedReader().use { it.readText() }
-                }
-                check(mirroredJson == ConfigData.rulesJson) { "远程规则文件校验失败" }
-                RemoteMirrorResult(
-                    rulesCount = mirroredCount,
-                    payloadBytes = payload.size,
-                )
+        RemoteConfigSyncTool.syncAsync(currentService) { result ->
+            result.onFailure {
+                if (showErrors) showMessage("配置镜像失败：${it.message ?: it.javaClass.simpleName}")
             }
-            runOnUiThread {
-                result.onFailure {
-                    if (showErrors) showMessage("配置镜像失败：${it.message ?: it.javaClass.simpleName}")
-                }
-                onResult?.invoke(result)
-            }
+            updateStatus()
+            onResult?.invoke(result)
         }
     }
 
@@ -256,7 +248,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showRestartHint() {
-        Snackbar.make(binding.root, "设置已保存，重启 SystemUI 后生效", Snackbar.LENGTH_SHORT).show()
+        val message = if (service == null) {
+            "设置已保存到本地；框架服务恢复后会自动同步，再重启一次 SystemUI 即可"
+        } else {
+            "设置已保存，正在同步到框架；完成后重启 SystemUI 生效"
+        }
+        Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
     }
 
     private fun showMessage(message: String) {
@@ -265,13 +262,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        remoteSyncExecutor.shutdown()
     }
 
     override fun onStart() {
         super.onStart()
         FrameworkServiceBridge.addListener(frameworkListener)
-        service?.let {
+        service?.takeIf { ConfigData.hasPendingRemoteSync }?.let {
             mirrorToRemoteStore(showErrors = false)
         }
     }

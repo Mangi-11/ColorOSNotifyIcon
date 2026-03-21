@@ -186,7 +186,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:text="所有设置修改后统一通过重启 SystemUI 生效，不做热更新。"
+                        android:text="设置会先保存到本地；框架服务恢复后自动同步，随后重启 SystemUI 生效。"
                         style="@style/TextAppearance.OStatus.BodyMuted" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
