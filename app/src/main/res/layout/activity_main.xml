@@ -17,7 +17,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/app_name"
+            android:text="@string/home_title"
             android:textColor="@color/colorTextGray"
             android:textSize="28sp"
             android:textStyle="bold" />
@@ -26,7 +26,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="仅支持 ColorOS 16 / Android 16。当前版本只修改状态栏图标，通知中心保持 ColorOS 原版。"
+            android:text="@string/home_subtitle"
             android:textColor="@color/colorTextDark"
             android:textSize="14sp" />
 

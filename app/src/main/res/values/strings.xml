@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">ColorOS 通知图标增强</string>
+    <string name="app_name">Oplus StatusIcon</string>
+    <string name="home_title">ColorOS 状态栏图标优化</string>
+    <string name="home_subtitle">为 ColorOS 优化通知图标并适配原生通知图标规范，仅优化状态栏图标，通知中心保持 ColorOS 原版。</string>
 </resources>
