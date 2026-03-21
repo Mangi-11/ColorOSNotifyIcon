@@ -1,81 +1,14 @@
-/*
- * ColorOSNotifyIcon - Optimize notification icons for ColorOS and adapt to native notification icon specifications.
- * Copyright (C) 20174 Fankes Studio(qzmmcn@163.com)
- * https://github.com/fankes/ColorOSNotifyIcon
- *
- * This software is non-free but opensource software: you can redistribute it
- * and/or modify it under the terms of the GNU Affero General Public License
- * as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
- * <p>
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * and eula along with this software.  If not, see
- * <https://www.gnu.org/licenses/>
- *
- * This file is created by fankes on 2023/2/2.
- */
-@file:Suppress("MemberVisibilityCanBePrivate")
-
 package com.fankes.coloros.notify.const
 
-import com.fankes.coloros.notify.generated.AppProperties
-import com.fankes.coloros.notify.wrapper.BuildConfigWrapper
-
-/**
- * 包名常量定义类
- */
 object PackageName {
-
-    /** 系统框架 */
-    const val SYSTEM_FRAMEWORK = "android"
-
-    /** 系统界面 (系统 UI) */
-    const val SYSTEMUI = "com.android.systemui"
+    const val SYSTEM_SCOPE = "system"
+    const val SYSTEM_UI = "com.android.systemui"
 }
 
-/**
- * 通知图标优化名单同步方式定义类
- */
-object IconRuleSourceSyncType {
-
-    /** GitHub Raw (代理 - GitHub Proxy) */
-    const val GITHUB_RAW_PROXY_1 = 500
-
-    /** GitHub Raw (代理 - 7ED Services) */
-    const val GITHUB_RAW_PROXY_2 = 1000
-
-    /** GitHub Raw (直连) */
-    const val GITHUB_RAW_DIRECT = 2000
-
-    /** 自定义地址 */
-    const val CUSTOM_URL = 3000
-}
-
-/**
- * 模块版本常量定义类
- */
-object ModuleVersion {
-
-    /** 当前 GitHub 提交的 ID (CI 自动构建) */
-    const val GITHUB_COMMIT_ID = AppProperties.GITHUB_CI_COMMIT_ID
-
-    /** 版本名称 */
-    const val NAME = BuildConfigWrapper.VERSION_NAME
-
-    /** 版本号 */
-    const val CODE = BuildConfigWrapper.VERSION_CODE
-
-    /** 是否为 CI 自动构建版本 */
-    val isCiMode = GITHUB_COMMIT_ID.isNotBlank()
-
-    /** 当前版本名称后缀 */
-    val suffix = GITHUB_COMMIT_ID.let { if (it.isNotBlank()) "-$it" else "" }
-
-    override fun toString() = "$NAME$suffix($CODE)"
+object ModuleInfo {
+    const val LOG_TAG = "ColorOSNotifyIcon"
+    const val PROJECT_URL = "https://github.com/fankes/ColorOSNotifyIcon"
+    const val RULES_BASE_URL = "https://raw.githubusercontent.com/fankes/AndroidNotifyIconAdapt/main"
+    const val RULES_OS_URL = "$RULES_BASE_URL/OS/ColorOS/NotifyIconsSupportConfig.json"
+    const val RULES_APP_URL = "$RULES_BASE_URL/APP/NotifyIconsSupportConfig.json"
 }

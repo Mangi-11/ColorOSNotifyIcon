@@ -1,7 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.ksp)
 }
 
 android {
@@ -42,6 +41,11 @@ android {
         buildConfig = true
         viewBinding = true
     }
+    packaging {
+        resources {
+            merges += "META-INF/xposed/*"
+        }
+    }
     lint { checkReleaseBuilds = false }
     androidResources.additionalParameters += listOf("--allow-reserved-package-id", "--package-id", "0x37")
 }
@@ -61,20 +65,12 @@ androidComponents {
 }
 
 dependencies {
-    compileOnly(libs.rovo89.xposed.api)
-    implementation(libs.yukihookapi)
-    ksp(libs.yukihookapi.ksp.xposed)
-    implementation(libs.kavaref.core)
-    implementation(libs.kavaref.extension)
-    implementation(libs.betterandroid.ui.extension)
-    implementation(libs.project.promote)
-    implementation(libs.libsu)
-    implementation(libs.drawabletoolbox)
+    compileOnly(libs.libxposed.api)
+    implementation(libs.libxposed.service)
     implementation(libs.okhttp)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.androidx.constraintlayout)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.espresso.core)

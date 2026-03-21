@@ -1,395 +1,280 @@
-/*
- * ColorOSNotifyIcon - Optimize notification icons for ColorOS and adapt to native notification icon specifications.
- * Copyright (C) 20174 Fankes Studio(qzmmcn@163.com)
- * https://github.com/fankes/ColorOSNotifyIcon
- *
- * This software is non-free but opensource software: you can redistribute it
- * and/or modify it under the terms of the GNU Affero General Public License
- * as published by the Free Software Foundation; either
- * version 3 of the License, or any later version.
- * <p>
- *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * and eula along with this software.  If not, see
- * <https://www.gnu.org/licenses/>
- *
- * This file is created by fankes on 2022/2/26.
- */
-@file:Suppress("SetTextI18n")
-
 package com.fankes.coloros.notify.ui.activity
 
-import androidx.core.view.isVisible
-import com.fankes.coloros.notify.R
-import com.fankes.coloros.notify.const.ModuleVersion
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
+import com.fankes.coloros.notify.BuildConfig
+import com.fankes.coloros.notify.const.ModuleInfo
+import com.fankes.coloros.notify.const.PackageName
 import com.fankes.coloros.notify.data.ConfigData
-import com.fankes.coloros.notify.data.factory.bind
 import com.fankes.coloros.notify.databinding.ActivityMainBinding
-import com.fankes.coloros.notify.param.IconPackParams
-import com.fankes.coloros.notify.ui.activity.base.BaseActivity
-import com.fankes.coloros.notify.utils.factory.androidVersionCodeName
-import com.fankes.coloros.notify.utils.factory.colorOSFullVersion
-import com.fankes.coloros.notify.utils.factory.colorOSNumberVersion
-import com.fankes.coloros.notify.utils.factory.hideOrShowLauncherIcon
-import com.fankes.coloros.notify.utils.factory.isLauncherIconShowing
-import com.fankes.coloros.notify.utils.factory.isNotColorOS
-import com.fankes.coloros.notify.utils.factory.isNotNoificationEnabled
-import com.fankes.coloros.notify.utils.factory.navigate
-import com.fankes.coloros.notify.utils.factory.openBrowser
-import com.fankes.coloros.notify.utils.factory.openNotifySetting
-import com.fankes.coloros.notify.utils.factory.showDialog
-import com.fankes.coloros.notify.utils.factory.showTimePicker
-import com.fankes.coloros.notify.utils.tool.GithubReleaseTool
-import com.fankes.coloros.notify.utils.tool.I18nWarnTool
-import com.fankes.coloros.notify.utils.tool.SystemUITool
-import com.fankes.projectpromote.ProjectPromote
-import com.highcapable.betterandroid.ui.extension.view.isUnderline
-import com.highcapable.yukihookapi.YukiHookAPI
+import com.fankes.coloros.notify.utils.tool.FrameworkServiceBridge
+import com.fankes.coloros.notify.utils.tool.IconRuleManagerTool
+import com.fankes.coloros.notify.utils.tool.SystemUiControl
+import com.google.android.material.snackbar.Snackbar
+import io.github.libxposed.service.XposedService
+import io.github.libxposed.service.XposedService.OnScopeEventListener
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.Executors
 
-class MainActivity : BaseActivity<ActivityMainBinding>() {
+class MainActivity : AppCompatActivity() {
 
-    companion object {
+    private data class RemoteMirrorResult(
+        val rulesCount: Int,
+        val payloadBytes: Int,
+    )
 
-        /** 窗口是否启动 */
-        internal var isActivityLive = false
-
-        /** 模块是否可用 */
-        internal var isModuleRegular = false
-
-        /** 模块是否有效 */
-        internal var isModuleValied = false
+    private lateinit var binding: ActivityMainBinding
+    private var service: XposedService? = null
+    private val remoteSyncExecutor = Executors.newSingleThreadExecutor()
+    private val frameworkListener = object : FrameworkServiceBridge.Listener {
+        override fun onServiceChanged(service: XposedService?) {
+            this@MainActivity.service = service
+            runOnUiThread {
+                if (service != null) mirrorToRemoteStore(showErrors = false)
+                updateStatus()
+            }
+        }
     }
 
-    override fun onCreate() {
-        /** 设置可用性 */
-        isActivityLive = true
-        /** 检查更新 */
-        GithubReleaseTool.checkingForUpdate(context = this, ModuleVersion.NAME) { version, function ->
-            binding.mainTextReleaseVersion.apply {
-                text = "点击更新 $version"
-                isVisible = true
-                setOnClickListener { function() }
+    private val scopeCallback = object : OnScopeEventListener {
+        override fun onScopeRequestApproved(approved: List<String>) {
+            runOnUiThread {
+                showMessage("作用域授权成功：${approved.joinToString()}")
+                updateStatus()
             }
         }
-        when {
-            /** 判断是否为 ColorOS 系统 */
-            isNotColorOS ->
-                showDialog {
-                    title = "不是 ColorOS 系统"
-                    msg = "此模块专为 ColorOS 系统打造，当前无法识别你的系统为 ColorOS，所以模块无法工作。"
-                    confirmButton(text = "查看支持的模块") {
-                        openBrowser(url = "https://github.com/fankes/AndroidNotifyIconAdapt")
-                        finish()
-                    }
-                    cancelButton(text = "退出") { finish() }
-                    noCancelable()
-                }
-            /** 判断是否 Hook */
-            YukiHookAPI.Status.isXposedModuleActive -> {
-                if (IconPackParams(context = this).iconDatas.isEmpty() && ConfigData.isEnableNotifyIconFix)
-                    showDialog {
-                        title = "配置通知图标优化名单"
-                        msg = "模块需要获取在线规则以更新“通知图标优化名单”，它现在是空的，这看起来是你第一次使用模块，请首先进行配置才可以使用相关功能。\n" +
-                            "你可以随时在本页面下方找到“配置通知图标优化名单”手动前往。"
-                        confirmButton(text = "前往") { navigate<ConfigureActivity>() }
-                        cancelButton()
-                        noCancelable()
-                    }
-                if (isNotNoificationEnabled && ConfigData.isEnableNotifyIconFix)
-                    showDialog {
-                        title = "模块的通知权限已关闭"
-                        msg = "请开启通知权限，以确保你能收到通知优化图标在线规则的更新。"
-                        confirmButton { openNotifySetting() }
-                        cancelButton()
-                        noCancelable()
-                    }
-                /** 推广、恰饭 */
-                ProjectPromote.show(activity = this, ModuleVersion.toString())
-            }
-            else ->
-                showDialog {
-                    title = "模块没有激活"
-                    msg = "检测到模块没有激活，模块需要 Xposed 环境依赖，" +
-                        "同时需要系统拥有 Root 权限，" +
-                        "请自行查看本页面使用帮助与说明第二条。\n" +
-                        "由于需要修改系统应用达到效果，模块不支持太极阴、应用转生。"
-                    confirmButton(text = "我知道了")
-                    noCancelable()
-                }
+
+        override fun onScopeRequestFailed(message: String) {
+            runOnUiThread { showMessage("作用域授权失败：$message") }
         }
-        I18nWarnTool.checkingOrShowing(context = this)
-        binding.mainTextVersion.text = "模块版本：${ModuleVersion.NAME}"
-        /** 设置 CI 自动构建标识 */
-        if (ModuleVersion.isCiMode)
-            binding.mainTextReleaseVersion.apply {
-                text = "CI ${ModuleVersion.GITHUB_COMMIT_ID}"
-                isVisible = true
-                setOnClickListener {
-                    showDialog {
-                        title = "CI 自动构建说明"
-                        msg = """
-                          你正在使用的是 CI 自动构建版本，Commit ID 为 ${ModuleVersion.GITHUB_COMMIT_ID}。
-                          
-                          它是由代码提交后自动触发并构建、自动编译发布的，并未经任何稳定性测试，使用风险自负。
-                        """.trimIndent()
-                        confirmButton(text = "我知道了")
-                        noCancelable()
-                    }
-                }
-            }
-        binding.mainTextColorOsVersion.text = "系统版本：[$androidVersionCodeName] $colorOSFullVersion"
-        /** 媒体通知自动展开仅支持 12.1 - 旧版本适配过于复杂已放弃 */
-        if (colorOSNumberVersion != "V12.1") {
-            binding.notifyMediaPanelAutoExpSwitch.isVisible = false
-            binding.notifyMediaPanelAutoExpText.isVisible = false
-        }
-        /** 通知面板背景透明度功能仅支持 ColorOS 12、12.1、13、13.1 */
-        binding.notifyPanelConfigItem.isVisible = colorOSNumberVersion.let { it == "V12" || it == "V12.1" || it == "V13" || it == "V13.1" }
-        binding.notifyIconAutoSyncText.text = ConfigData.notifyIconFixAutoTime
-        binding.moduleEnableSwitch.bind(ConfigData.ENABLE_MODULE) {
-            onInitialize {
-                binding.moduleEnableLogItem.isVisible = it
-                binding.expAllDebugLogButton.isVisible = it && ConfigData.isEnableModuleLog
-                binding.notifyIconConfigItem.isVisible = it
-                binding.devNotifyConfigItem.isVisible = it
-                binding.notifyStyleConfigItem.isVisible = it
-            }
-            onChanged {
-                reinitialize()
-                refreshModuleStatus()
-                SystemUITool.showNeedRestartSnake(context = this@MainActivity)
-            }
-        }
-        binding.moduleEnableLogSwitch.bind(ConfigData.ENABLE_MODULE_LOG) {
-            onInitialize { binding.expAllDebugLogButton.isVisible = it && ConfigData.isEnableModule }
-            onChanged {
-                reinitialize()
-                SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true)
-            }
-        }
-        binding.devNotifyConfigSwitch.bind(ConfigData.ENABLE_REMOVE_DEV_NOTIFY) {
-            onChanged { SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true) }
-        }
-        binding.crcpNotifyConfigSwitch.bind(ConfigData.ENABLE_REMOVE_CHANGE_COMPLETE_NOTIFY) {
-            onChanged { SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true) }
-        }
-        binding.dndNotifyConfigSwitch.bind(ConfigData.ENABLE_REMOVE_DND_ALERT_NOTIFY) {
-            onChanged { SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true) }
-        }
-        binding.colorIconCompatSwitch.bind(ConfigData.ENABLE_COLOR_ICON_COMPAT) {
-            isAutoApplyChanges = false
-            onChanged {
-                /** 应用更改并刷新系统界面 */
-                fun applyChangesAndRefresh() {
-                    applyChanges()
-                    SystemUITool.refreshSystemUI(context = this@MainActivity)
-                }
-                if (it) showDialog {
-                    title = "启用兼容模式"
-                    msg = "启用兼容模式可修复部分系统版本可能出现无法判定通知图标反色的问题，" +
-                        "但是这也可能会导致新的问题，一般情况下不建议开启，确定要继续吗？\n\n" +
-                        "如果系统界面刷新后通知图标颜色发生错误，请尝试重启一次系统界面。"
-                    confirmButton { applyChangesAndRefresh() }
-                    cancelButton { cancelChanges() }
-                    noCancelable()
-                } else applyChangesAndRefresh()
-            }
-        }
-        binding.md3StyleConfigSwitch.bind(ConfigData.ENABLE_MD3_NOTIFY_ICON_STYLE) {
-            onInitialize { binding.notifyIconCustomCornerItem.isVisible = it && ConfigData.isEnableNotifyIconForceAppIcon.not() }
-            onChanged {
-                reinitialize()
-                SystemUITool.refreshSystemUI(context = this@MainActivity)
-            }
-        }
-        binding.notifyIconForceSystemColorSwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FORCE_SYSTEM_COLOR) {
-            isAutoApplyChanges = false
-            onChanged {
-                /** 应用更改并刷新系统界面 */
-                fun applyChangesAndRefresh() {
-                    applyChangesAndReinitialize()
-                    SystemUITool.refreshSystemUI(context = this@MainActivity)
-                }
-                if (it) showDialog {
-                    title = "破坏性功能警告"
-                    msg = "开启这个功能后，任何通知栏中的通知图标都会忽略图标自身的着色属性，全部使用系统默认颜色 (系统提供的统一色调) 着色。\n\n" +
-                        "此功能仅面向一些追求图标美观度的用户，我们不推荐开启这个功能，且发生任何 BUG 都不会去修复，仍然继续开启吗？"
-                    confirmButton { applyChangesAndRefresh() }
-                    cancelButton { cancelChanges() }
-                    noCancelable()
-                } else applyChangesAndRefresh()
-            }
-        }
-        binding.notifyIconForceAppIconSwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FORCE_APP_ICON) {
-            isAutoApplyChanges = false
-            onInitialize {
-                binding.notifyIconForceSystemColorItem.isVisible = it.not()
-                binding.notifyIconCustomCornerItem.isVisible = it.not() && ConfigData.isEnableMd3NotifyIconStyle
-            }
-            onChanged {
-                /** 应用更改并刷新系统界面 */
-                fun applyChangesAndRefresh() {
-                    applyChangesAndReinitialize()
-                    SystemUITool.refreshSystemUI(context = this@MainActivity)
-                }
-                if (it) showDialog {
-                    title = "破坏性功能警告"
-                    msg = "开启这个功能后，任何通知栏中的通知图标都会被强制替换为当前推送通知的 APP 的图标，" +
-                        "某些系统级别的 APP 通知图标可能会显示异常或发生图标丢失。\n\n" +
-                        "此功能仅面向一些追求图标美观度的用户，我们不推荐开启这个功能，且发生任何 BUG 都不会去修复，仍然继续开启吗？"
-                    confirmButton { applyChangesAndRefresh() }
-                    cancelButton { cancelChanges() }
-                    noCancelable()
-                } else applyChangesAndRefresh()
-            }
-        }
-        binding.notifyPanelConfigSwitch.bind(ConfigData.ENABLE_NOTIFY_PANEL_ALPHA) {
-            onInitialize {
-                binding.notifyPanelConfigTextPanel.isVisible = it
-                binding.notifyPanelConfigWarnPanel.isVisible = it
-                binding.notifyPanelConfigSeekbar.isVisible = it
-            }
-            onChanged {
-                reinitialize()
-                SystemUITool.refreshSystemUI(context = this@MainActivity)
-            }
-        }
-        binding.notifyMediaPanelAutoExpSwitch.bind(ConfigData.ENABLE_NOTIFY_MEDIA_PANEL_AUTO_EXP) {
-            onChanged { SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true) }
-        }
-        binding.notifyIconFixSwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FIX) {
-            onInitialize {
-                binding.notifyIconFixButton.isVisible = it
-                binding.notifyIconFixPlaceholderItem.isVisible = it
-                binding.notifyIconFixNotifyItem.isVisible = it
-                binding.notifyIconAutoSyncItem.isVisible = it
-            }
-            onChanged {
-                reinitialize()
-                SystemUITool.refreshSystemUI(context = this@MainActivity)
-            }
-        }
-        binding.notifyIconFixPlaceholderSwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FIX_PLACEHOLDER) {
-            isAutoApplyChanges = false
-            onChanged {
-                /** 应用更改并刷新系统界面 */
-                fun applyChangesAndRefresh() {
-                    applyChanges()
-                    SystemUITool.refreshSystemUI(context = this@MainActivity)
-                }
-                if (it) showDialog {
-                    title = "注意"
-                    msg = "开启这个功能后，当发现未适配的彩色通知图标时，" +
-                        "状态栏中显示的通知图标将会使用预置的占位符图标进行修补，" +
-                        "通知栏中显示的通知图标保持原始图标不变。\n\n" +
-                        "此功能的作用仅为临时修复破坏规范的通知图标，仍然继续开启吗？"
-                    confirmButton { applyChangesAndRefresh() }
-                    cancelButton { cancelChanges() }
-                    noCancelable()
-                } else applyChangesAndRefresh()
-            }
-        }
-        binding.notifyIconFixNotifySwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FIX_NOTIFY) {
-            onChanged { SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true) }
-        }
-        binding.notifyIconAutoSyncSwitch.bind(ConfigData.ENABLE_NOTIFY_ICON_FIX_AUTO) {
-            onInitialize { binding.notifyIconAutoSyncChildItem.isVisible = it }
-            onChanged {
-                reinitialize()
-                SystemUITool.refreshSystemUI(context = this@MainActivity, isRefreshCacheOnly = true)
-            }
-        }
-        binding.notifyPanelConfigSeekbar.bind(ConfigData.NOTIFY_PANEL_ALPHA_LEVEL, binding.notifyPanelConfigText, suffix = "%") {
-            SystemUITool.refreshSystemUI(context = this)
-        }
-        binding.notifyIconCustomCornerSeekbar.bind(ConfigData.NOTIFY_ICON_CORNER_SIZE, binding.notifyIconCustomCornerText, suffix = " dp") {
-            SystemUITool.refreshSystemUI(context = this)
-        }
-        /** 导出全部日志按钮点击事件 */
-        binding.expAllDebugLogButton.setOnClickListener { SystemUITool.obtainAndExportDebugLogs(context = this) }
-        /** 通知图标优化名单按钮点击事件 */
-        binding.notifyIconFixButton.setOnClickListener { navigate<ConfigureActivity>() }
-        /** 自动更新在线规则修改时间按钮点击事件 */
-        binding.notifyIconAutoSyncButton.setOnClickListener {
-            showTimePicker(ConfigData.notifyIconFixAutoTime) {
-                showDialog {
-                    title = "每天 $it 自动更新"
-                    msg = "设置保存后将在每天 $it 自动同步名单到最新云端数据，若数据已是最新则不会显示任何提示，否则会发送一条通知。\n\n" +
-                        "请确保：\n\n" +
-                        "1.模块没有被禁止前台以及后台联网权限\n" +
-                        "2.模块没有被禁止被其它 APP 关联唤醒\n" +
-                        "3.模块的系统通知权限已开启\n\n" +
-                        "模块无需保持在后台运行，到达同步时间后会自动启动，如果到达时间后模块正在运行则会自动取消本次计划任务。"
-                    confirmButton(text = "保存设置") {
-                        ConfigData.notifyIconFixAutoTime = it
-                        this@MainActivity.binding.notifyIconAutoSyncText.text = it
-                        SystemUITool.refreshSystemUI(context, isRefreshCacheOnly = true)
-                    }
-                    cancelButton()
-                    noCancelable()
-                }
-            }
-        }
-        /** 重启按钮点击事件 */
-        binding.titleRestartIcon.setOnClickListener { SystemUITool.restartSystemUI(context = this) }
-        /** 项目地址按钮点击事件 */
-        binding.titleGithubIcon.setOnClickListener { openBrowser(url = "https://github.com/fankes/ColorOSNotifyIcon") }
-        /** 恰饭！ */
-        binding.linkWithFollowMe.isUnderline = true
-        binding.linkWithFollowMe.setOnClickListener {
-            openBrowser(url = "https://www.coolapk.com/u/876977", packageName = "com.coolapk.market")
-        }
-        /** 设置桌面图标显示隐藏 */
-        binding.hideIconInLauncherSwitch.isChecked = isLauncherIconShowing.not()
-        binding.hideIconInLauncherSwitch.setOnCheckedChangeListener { btn, b ->
-            if (btn.isPressed.not()) return@setOnCheckedChangeListener
-            hideOrShowLauncherIcon(b)
-        }
-        /** 注册导出调试日志启动器 */
-        SystemUITool.registerExportDebugLogsLauncher(activity = this)
     }
 
-    /** 刷新模块状态 */
-    private fun refreshModuleStatus() {
-        binding.mainLinStatus.setBackgroundResource(
-            when {
-                YukiHookAPI.Status.isXposedModuleActive &&
-                    (isModuleRegular.not() || isModuleValied.not() || ConfigData.isEnableModule.not()) -> R.drawable.bg_yellow_round
-                YukiHookAPI.Status.isXposedModuleActive -> R.drawable.bg_green_round
-                else -> R.drawable.bg_dark_round
-            }
-        )
-        binding.mainImgStatus.setImageResource(
-            when {
-                YukiHookAPI.Status.isXposedModuleActive && ConfigData.isEnableModule -> R.drawable.ic_success
-                else -> R.drawable.ic_warn
-            }
-        )
-        binding.mainTextStatus.text = when {
-            YukiHookAPI.Status.isXposedModuleActive && ConfigData.isEnableModule.not() -> "模块已停用"
-            YukiHookAPI.Status.isXposedModuleActive && isModuleRegular.not() -> "模块已激活，请重启系统界面"
-            YukiHookAPI.Status.isXposedModuleActive && isModuleValied.not() -> "模块已更新，请重启系统界面"
-            YukiHookAPI.Status.isXposedModuleActive -> "模块已激活"
-            else -> "模块未激活"
-        }
-        binding.mainTextApiWay.isVisible = YukiHookAPI.Status.isXposedModuleActive
-        binding.mainTextApiWay.text = "Activated by ${YukiHookAPI.Status.Executor.name} API ${YukiHookAPI.Status.Executor.apiLevel}"
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        ConfigData.initialize(applicationContext)
+        service = FrameworkServiceBridge.getCurrentService()
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        bindLocalState()
+        bindActions()
+        updateStatus()
     }
 
-    override fun onResume() {
-        super.onResume()
-        /** 刷新模块状态 */
-        refreshModuleStatus()
-        /** 检查模块激活状态 */
-        SystemUITool.checkingActivated(context = this) { isValied ->
-            isModuleRegular = true
-            isModuleValied = isValied
-            refreshModuleStatus()
+    private fun bindLocalState() {
+        binding.moduleEnableSwitch.isChecked = ConfigData.isModuleEnabled
+        binding.iconEnhancementSwitch.isChecked = ConfigData.isIconEnhancementEnabled
+        binding.versionText.text = "模块版本：${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+        binding.deviceText.text = "目标环境：ColorOS 16 / Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+        refreshRuleState()
+        refreshSettingState()
+    }
+
+    private fun bindActions() {
+        binding.moduleEnableSwitch.setOnCheckedChangeListener { _, isChecked ->
+            ConfigData.isModuleEnabled = isChecked
+            refreshSettingState()
+            mirrorToRemoteStore()
+            updateStatus()
+            showRestartHint()
         }
+        binding.iconEnhancementSwitch.setOnCheckedChangeListener { _, isChecked ->
+            ConfigData.isIconEnhancementEnabled = isChecked
+            refreshSettingState()
+            mirrorToRemoteStore()
+            updateStatus()
+            showRestartHint()
+        }
+        binding.requestScopeButton.setOnClickListener {
+            val currentService = service
+            if (currentService == null) {
+                showMessage("未连接 modern Xposed 框架")
+                return@setOnClickListener
+            }
+            currentService.requestScope(listOf(PackageName.SYSTEM_SCOPE, PackageName.SYSTEM_UI), scopeCallback)
+        }
+        binding.syncRulesButton.setOnClickListener {
+            binding.syncRulesButton.isEnabled = false
+            binding.syncRulesButton.text = "同步中..."
+            IconRuleManagerTool.syncRules { result ->
+                result.onSuccess { syncResult ->
+                    refreshRuleState()
+                    binding.syncRulesButton.text = "镜像中..."
+                    mirrorToRemoteStore(showErrors = false) { mirrorResult ->
+                        binding.syncRulesButton.isEnabled = true
+                        binding.syncRulesButton.text = "同步规则"
+                        mirrorResult.onSuccess {
+                            showMessage("规则同步完成，共 ${syncResult.count} 条")
+                            showRestartHint()
+                        }.onFailure {
+                            showMessage("本地规则已同步，但镜像到框架失败：${it.message ?: it.javaClass.simpleName}")
+                        }
+                    }
+                }.onFailure {
+                    binding.syncRulesButton.isEnabled = true
+                    binding.syncRulesButton.text = "同步规则"
+                    showMessage("规则同步失败：${it.message ?: it.javaClass.simpleName}")
+                }
+            }
+        }
+        binding.restartSystemUiButton.setOnClickListener {
+            binding.restartSystemUiButton.isEnabled = false
+            mirrorToRemoteStore(showErrors = false) { mirrorResult ->
+                mirrorResult.onSuccess {
+                    SystemUiControl.restartSystemUi { result ->
+                        binding.restartSystemUiButton.isEnabled = true
+                        result.onSuccess {
+                            showMessage("已请求重启 SystemUI")
+                        }.onFailure {
+                            showMessage("重启失败：${it.message ?: it.javaClass.simpleName}")
+                        }
+                    }
+                }.onFailure {
+                    binding.restartSystemUiButton.isEnabled = true
+                    showMessage("重启前配置镜像失败：${it.message ?: it.javaClass.simpleName}")
+                }
+            }
+        }
+        binding.openGithubButton.setOnClickListener {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ModuleInfo.PROJECT_URL)))
+        }
+    }
+
+    private fun mirrorToRemoteStore(
+        showErrors: Boolean = true,
+        onResult: ((Result<RemoteMirrorResult>) -> Unit)? = null,
+    ) {
+        val currentService = service
+        if (currentService == null) {
+            val error = IllegalStateException("未连接 modern Xposed 框架")
+            if (showErrors) showMessage(error.message ?: "配置镜像失败")
+            onResult?.invoke(Result.failure(error))
+            return
+        }
+        remoteSyncExecutor.execute {
+            val result = runCatching {
+                val remotePrefs = currentService.getRemotePreferences(ConfigData.GROUP_CONFIG)
+                val committed = ConfigData.mirrorTo(remotePrefs)
+                check(committed) { "远程偏好设置提交失败" }
+                val payload = ConfigData.rulesJson.toByteArray(Charsets.UTF_8)
+                currentService.openRemoteFile(ConfigData.RULES_FILE_NAME).use { pfd ->
+                    FileOutputStream(pfd.fileDescriptor).use { output ->
+                        output.channel.truncate(0)
+                        output.write(payload)
+                        output.flush()
+                        output.fd.sync()
+                    }
+                }
+                val mirroredCount = remotePrefs.getInt(ConfigData.KEY_RULES_COUNT, -1)
+                check(mirroredCount == ConfigData.rulesCount) {
+                    "远程规则数量不一致：local=${ConfigData.rulesCount}, remote=$mirroredCount"
+                }
+                val mirroredJson = currentService.openRemoteFile(ConfigData.RULES_FILE_NAME).use { pfd ->
+                    FileInputStream(pfd.fileDescriptor).bufferedReader().use { it.readText() }
+                }
+                check(mirroredJson == ConfigData.rulesJson) { "远程规则文件校验失败" }
+                RemoteMirrorResult(
+                    rulesCount = mirroredCount,
+                    payloadBytes = payload.size,
+                )
+            }
+            runOnUiThread {
+                result.onFailure {
+                    if (showErrors) showMessage("配置镜像失败：${it.message ?: it.javaClass.simpleName}")
+                }
+                onResult?.invoke(result)
+            }
+        }
+    }
+
+    private fun refreshSettingState() {
+        val moduleEnabled = binding.moduleEnableSwitch.isChecked
+        binding.iconEnhancementSwitch.isEnabled = moduleEnabled
+    }
+
+    private fun refreshRuleState() {
+        binding.rulesStatusText.text = "本地规则：${ConfigData.rulesCount} 条"
+        binding.lastSyncText.text = if (ConfigData.rulesUpdatedAt > 0L) {
+            val formatted = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(ConfigData.rulesUpdatedAt))
+            "最后同步：$formatted"
+        } else {
+            "最后同步：从未同步"
+        }
+    }
+
+    private fun updateStatus() {
+        val currentService = service
+        val cachedFramework = ConfigData.readFrameworkSnapshot()
+        val requiredScopes = setOf(PackageName.SYSTEM_SCOPE, PackageName.SYSTEM_UI)
+        val grantedScopes = (currentService?.scope ?: cachedFramework.scopes).toSet()
+        val missingScopes = requiredScopes - grantedScopes
+
+        binding.moduleStatusText.text = when {
+            !ConfigData.isModuleEnabled -> "模块已关闭"
+            currentService == null && cachedFramework.hasConnectionRecord && missingScopes.isEmpty() ->
+                "模块已激活，当前只是设置页没有连上框架服务"
+            currentService == null && cachedFramework.hasConnectionRecord ->
+                "模块上次已连接框架，但作用域仍不完整：${missingScopes.joinToString()}"
+            currentService == null -> "未连接 modern Xposed 框架"
+            missingScopes.isNotEmpty() -> "模块已连接，但缺少作用域：${missingScopes.joinToString()}"
+            else -> "模块已连接，重启 SystemUI 后按当前配置生效"
+        }
+
+        binding.frameworkStatusText.text = if (currentService == null) {
+            if (cachedFramework.hasConnectionRecord) {
+                "框架状态：上次连接 ${cachedFramework.frameworkName} ${cachedFramework.frameworkVersion} / API ${cachedFramework.apiVersion}"
+            } else {
+                "框架状态：未连接"
+            }
+        } else {
+            "框架状态：${currentService.frameworkName} ${currentService.frameworkVersion} / API ${currentService.apiVersion}"
+        }
+
+        binding.scopeStatusText.text = if (currentService == null) {
+            if (cachedFramework.hasConnectionRecord) {
+                val label = if (cachedFramework.scopes.isEmpty()) "无" else cachedFramework.scopes.joinToString()
+                "授权作用域：上次检测为 $label"
+            } else {
+                "授权作用域：未获取"
+            }
+        } else {
+            "授权作用域：${if (grantedScopes.isEmpty()) "无" else grantedScopes.joinToString()}"
+        }
+
+        binding.requestScopeButton.isEnabled = currentService != null && missingScopes.isNotEmpty()
+    }
+
+    private fun showRestartHint() {
+        Snackbar.make(binding.root, "设置已保存，重启 SystemUI 后生效", Snackbar.LENGTH_SHORT).show()
+    }
+
+    private fun showMessage(message: String) {
+        Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        remoteSyncExecutor.shutdown()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        FrameworkServiceBridge.addListener(frameworkListener)
+        service?.let {
+            mirrorToRemoteStore(showErrors = false)
+        }
+    }
+
+    override fun onStop() {
+        FrameworkServiceBridge.removeListener(frameworkListener)
+        super.onStop()
     }
 }
