@@ -28,9 +28,8 @@ android {
     buildTypes {
         all { signingConfig = signingConfigs.getByName("universal") }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
     compileOptions {
@@ -58,8 +57,9 @@ androidComponents {
                 if (suffix.isNotBlank()) "-$suffix" else ""
             }
             val currentVersion = "${output.versionName.get()}$currentSuffix(${output.versionCode.get()})"
+            val artifactName = "OStatus"
             if (output is com.android.build.api.variant.impl.VariantOutputImpl)
-                output.outputFileName.set("${gropify.project.name}-v$currentVersion-$currentType.apk")
+                output.outputFileName.set("$artifactName-v$currentVersion-$currentType.apk")
         }
     }
 }
