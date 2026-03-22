@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import android.widget.ImageView
+import androidx.core.os.BundleCompat
 import com.fankes.coloros.notify.bean.IconDataBean
 import com.fankes.coloros.notify.const.ModuleInfo
 import com.fankes.coloros.notify.const.PackageName
@@ -222,7 +223,7 @@ class ModuleMain : XposedModule() {
         if (!systemUiSnapshot.moduleEnabled || !systemUiSnapshot.iconEnhancementEnabled) return null
         val packageName = sbn.packageName.orEmpty()
         val preservedOriginalIcon = runCatching {
-            sbn.notification.extras.getParcelable(EXTRA_ORIGINAL_SMALL_ICON) as? Icon
+            BundleCompat.getParcelable(sbn.notification.extras, EXTRA_ORIGINAL_SMALL_ICON, Icon::class.java)
         }.getOrNull()
         val baseStatusBarIcon = preservedOriginalIcon ?: sbn.notification.smallIcon
         val statusBarOriginalDrawable = runCatching {
