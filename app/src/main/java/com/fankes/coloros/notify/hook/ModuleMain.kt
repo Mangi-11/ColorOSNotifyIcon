@@ -24,11 +24,26 @@ import java.io.FileInputStream
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 class ModuleMain : XposedModule() {
 
     companion object {
         private const val EXTRA_ORIGINAL_SMALL_ICON = "com.fankes.coloros.notify.original_small_icon"
+
+        /**
+         * 状态栏规则图标归一化输出最小尺寸（px）。
+         *
+         * 说明：部分在线规则图标源尺寸为 40/50/72 px，ColorOS 16 的状态栏图标渲染路径可能不会对
+         * 小尺寸位图做「放大」，导致在高密度屏幕上视觉特别小，因此这里保证输出尺寸不低于一定阈值。
+         */
+        private const val STATUS_BAR_ICON_MIN_OUTPUT_SIZE_PX = 96
+
+        /** 状态栏图标内容尽可能贴近画布（更激进） */
+        private const val STATUS_BAR_ICON_CONTENT_SCALE = 1.0f
+
+        /** 透明裁边阈值（0~255），值越大裁得越狠 */
+        private const val STATUS_BAR_ICON_ALPHA_THRESHOLD = 16
     }
 
     private val onceLogs = ConcurrentHashMap.newKeySet<String>()
@@ -106,12 +121,12 @@ class ModuleMain : XposedModule() {
                     warnOnce("system.fix.cache.original", "缓存原始 smallIcon 失败", it)
                 }
             }
-            infoOnce("system.fix.hit", "fixSmallIcon 已命中，已缓存原始 smallIcon，通知面板保留 ColorOS 原始逻辑")
-            chain.proceed()
+            infoOnce("system.fix.hit", "fixSmallIcon 已命中，已拦截 ColorOS 覆盖 smallIcon 逻辑")
+            null
         }
         emitLog(
             Log.INFO,
-            "system_server Hook 已安装：fixSmallIcon 原始图标缓存, module=${systemServerSnapshot.moduleEnabled}, enhancement=${systemServerSnapshot.iconEnhancementEnabled}"
+            "system_server Hook 已安装：fixSmallIcon 拦截, module=${systemServerSnapshot.moduleEnabled}, enhancement=${systemServerSnapshot.iconEnhancementEnabled}"
         )
         return true
     }
@@ -134,24 +149,27 @@ class ModuleMain : XposedModule() {
     private fun installSystemUiHooks(classLoader: ClassLoader): Boolean {
         val members = SystemUiMembers.resolve(classLoader, ::warnOnce) ?: return false
 
+        loadClassOrNull(
+            "com.oplus.systemui.statusbar.notification.util.OplusNotificationSmallIconUtil",
+            classLoader
+        )?.let { utilClass ->
+            ReflectHelper.findMethod(
+                utilClass,
+                "useAppIconForSmallIcon",
+                Notification::class.java,
+            )?.let { method ->
+                hook(method).intercept { false }
+                emitLog(Log.INFO, "SystemUI Hook：已禁用 OplusNotificationSmallIconUtil.useAppIconForSmallIcon")
+            } ?: warnOnce(
+                "systemui.useAppIcon.missing",
+                "未找到 OplusNotificationSmallIconUtil.useAppIconForSmallIcon(Notification)"
+            )
+        }
+
         hook(members.statusBarUpdateGrayScale).intercept { chain ->
             val drawable = chain.args.getOrNull(0) as? Drawable ?: return@intercept chain.proceed()
             val statusBarIconView = chain.args.getOrNull(1) ?: return@intercept chain.proceed()
-            val sbn = chain.args.getOrNull(2) as? StatusBarNotification
-            val target = sbn?.let {
-                resolveTargetIcon((statusBarIconView as? ImageView)?.context ?: return@intercept chain.proceed(), it)
-            } ?: return@intercept chain.proceed()
-            if (target.shouldOverrideStatusBar) {
-                runCatching {
-                    members.statusBarSetIsIconColorable.invoke(
-                        statusBarIconView,
-                        target.usesRule || BitmapCompatTool.isGrayscaleDrawable(target.statusBarDrawable)
-                    )
-                }.onFailure {
-                    warnOnce("systemui.statusbar.grayscale.rule", "状态栏规则图灰度标记失败", it)
-                }
-                return@intercept null
-            }
+            val sbn = chain.args.getOrNull(2) as? StatusBarNotification ?: return@intercept chain.proceed()
             runCatching {
                 members.statusBarSetIsIconColorable.invoke(statusBarIconView, BitmapCompatTool.isGrayscaleDrawable(drawable))
             }.onFailure {
@@ -161,74 +179,46 @@ class ModuleMain : XposedModule() {
             null
         }
 
-        hook(members.statusBarControllerUpdateDrawable).intercept { chain ->
-            val drawable = chain.args.getOrNull(0) as? Drawable ?: return@intercept chain.proceed()
-            val statusBarIconView = chain.args.getOrNull(1) as? ImageView ?: return@intercept chain.proceed()
-            val sbn = chain.args.getOrNull(2) as? StatusBarNotification ?: return@intercept chain.proceed()
-            val target = resolveTargetIcon(statusBarIconView.context, sbn) ?: return@intercept chain.proceed()
-            if (!target.shouldOverrideStatusBar) return@intercept chain.proceed()
-            infoOnce(
-                "systemui.statusbar.controller.hit",
-                if (target.usesRule) "SystemUI 命中 Oplus 状态栏最终出图路径（规则图）"
-                else "SystemUI 命中 Oplus 状态栏最终出图路径（原始 smallIcon）"
-            )
-            statusBarIconView.background = null
-            statusBarIconView.clearColorFilter()
-            statusBarIconView.setPadding(0, 0, 0, 0)
-            statusBarIconView.setImageDrawable(target.statusBarDrawable.mutate())
-            runCatching {
-                members.statusBarSetIsIconColorable.invoke(
-                    statusBarIconView,
-                    target.usesRule || BitmapCompatTool.isGrayscaleDrawable(target.statusBarDrawable)
-                )
-            }.onFailure {
-                warnOnce("systemui.statusbar.controller.colorable", "状态栏规则图颜色标记失败", it)
+        hook(members.iconManagerGetIconDescriptor).intercept { chain ->
+            if (!systemUiSnapshot.moduleEnabled || !systemUiSnapshot.iconEnhancementEnabled) {
+                return@intercept chain.proceed()
             }
-            true
-        }
-
-        hook(members.statusBarGetIcon).intercept { chain ->
-            val statusBarIconView = chain.thisObject
+            val result = chain.proceed()
+            val statusBarIcon = result ?: return@intercept result
+            val notificationEntry = chain.args.getOrNull(0) ?: return@intercept statusBarIcon
+            val iconManager = chain.thisObject ?: return@intercept statusBarIcon
+            val context = runCatching {
+                val iconBuilder = members.iconManagerIconBuilderField.get(iconManager)
+                members.iconBuilderContextField.get(iconBuilder) as? Context
+            }.getOrNull() ?: return@intercept statusBarIcon
             val sbn = runCatching {
-                members.statusBarNotificationField.get(statusBarIconView) as? StatusBarNotification
+                members.notificationEntryGetSbn.invoke(notificationEntry) as? StatusBarNotification
+            }.getOrNull() ?: return@intercept statusBarIcon
+            val currentStatusBarIcon = runCatching {
+                members.statusBarIconField.get(statusBarIcon) as? Icon
             }.getOrNull()
-            val iconView = statusBarIconView as? ImageView ?: return@intercept chain.proceed()
-            val target = sbn?.let { resolveTargetIcon(iconView.context, it) }
-                ?.takeIf { it.shouldOverrideStatusBar && it.statusBarReplacementIcon != null }
-                ?: return@intercept chain.proceed()
-            val replacementIcon = target.statusBarReplacementIcon ?: return@intercept chain.proceed()
-            infoOnce(
-                "systemui.statusbar.hit",
-                if (target.usesRule) "SystemUI 命中状态栏规则图标路径"
-                else "SystemUI 命中状态栏原始 smallIcon 路径"
-            )
-            val statusBarIcon = chain.args.firstOrNull() ?: return@intercept chain.proceed()
-            val originalIcon = runCatching { members.statusBarIconField.get(statusBarIcon) }.getOrNull()
-            val originalPreloaded = runCatching { members.statusBarPreloadedIconField.get(statusBarIcon) }.getOrNull()
+            val replacementIcon = resolveStatusBarReplacementIcon(context, sbn, currentStatusBarIcon)
+                ?: return@intercept statusBarIcon
             runCatching {
                 members.statusBarIconField.set(statusBarIcon, replacementIcon)
                 members.statusBarPreloadedIconField.set(statusBarIcon, null)
-            }.getOrElse {
+            }.onFailure {
                 warnOnce("systemui.statusbar.icon.replace", "状态栏规则图标注入失败", it)
-                return@intercept chain.proceed()
             }
-            try {
-                chain.proceed().also {
-                    runCatching { members.statusBarSetIsIconColorable.invoke(statusBarIconView, true) }
-                }
-            } finally {
-                runCatching { members.statusBarIconField.set(statusBarIcon, originalIcon) }
-                runCatching { members.statusBarPreloadedIconField.set(statusBarIcon, originalPreloaded) }
-            }
+            statusBarIcon
         }
         emitLog(
             Log.INFO,
-            "SystemUI Hook 已安装：仅状态栏图标路径（StatusBarIconControllerExImpl + StatusBarIconView.getIcon）"
+            "SystemUI Hook 已安装：状态栏图标路径（IconManager.getIconDescriptor）"
         )
         return true
     }
 
-    private fun resolveTargetIcon(context: Context, sbn: StatusBarNotification): ResolvedIcon? {
+    private fun resolveStatusBarReplacementIcon(
+        context: Context,
+        sbn: StatusBarNotification,
+        currentStatusBarIcon: Icon?,
+    ): Icon? {
         if (!systemUiSnapshot.moduleEnabled || !systemUiSnapshot.iconEnhancementEnabled) return null
         val packageName = sbn.packageName.orEmpty()
         val preservedOriginalIcon = runCatching {
@@ -238,36 +228,43 @@ class ModuleMain : XposedModule() {
         val statusBarOriginalDrawable = runCatching {
             baseStatusBarIcon?.loadDrawable(context)?.mutate()
         }.getOrNull() ?: return null
-        val rule = systemUiRules[packageName]?.takeIf { it.isEnabled }
         val originalIsGrayscale = BitmapCompatTool.isGrayscaleDrawable(statusBarOriginalDrawable)
-        val shouldUseRule = rule != null && (rule.isEnabledAll || !originalIsGrayscale)
-        val statusBarBitmap = if (shouldUseRule) {
-            BitmapCompatTool.normalizeIconBitmap(rule!!.iconBitmap)
-        } else {
-            null
+        val currentIsGrayscale = runCatching {
+            currentStatusBarIcon?.loadDrawable(context)?.mutate()?.let(BitmapCompatTool::isGrayscaleDrawable)
+        }.getOrNull()
+        if (originalIsGrayscale && currentIsGrayscale == false) {
+            infoOnce(
+                "systemui.statusbar.prefer.original:$packageName",
+                "检测到应用已提供原生灰度 smallIcon，但 SystemUI 当前使用彩色图标，已恢复为原始 smallIcon"
+            )
+            return baseStatusBarIcon
         }
-        val shouldUsePreservedOriginal = !shouldUseRule && preservedOriginalIcon != null
-        val targetDrawable = when {
-            shouldUseRule -> BitmapDrawable(context.resources, rule!!.iconBitmap).mutate()
-            shouldUsePreservedOriginal -> statusBarOriginalDrawable
-            originalIsGrayscale -> statusBarOriginalDrawable
-            else -> null
-        } ?: return null
-        val statusBarDrawable = when {
-            shouldUseRule && statusBarBitmap != null -> BitmapDrawable(context.resources, statusBarBitmap).mutate()
-            else -> targetDrawable
-        }
-        return ResolvedIcon(
-            statusBarDrawable = statusBarDrawable,
-            usesRule = shouldUseRule,
-            statusBarBitmap = statusBarBitmap,
-            statusBarReplacementIcon = when {
-                shouldUseRule && statusBarBitmap != null -> Icon.createWithBitmap(statusBarBitmap)
-                shouldUsePreservedOriginal -> preservedOriginalIcon
-                else -> null
-            },
-            shouldOverrideStatusBar = shouldUseRule || shouldUsePreservedOriginal,
-        )
+
+        val rule = systemUiRules[packageName]?.takeIf { it.isEnabled } ?: return null
+        val shouldUseRule = rule.isEnabledAll || !originalIsGrayscale
+        if (!shouldUseRule) return null
+        infoOnce("systemui.statusbar.rule.hit", "SystemUI 命中状态栏规则图标路径")
+        val outputSize = resolveStatusBarIconOutputSizePx(context, rule.iconBitmap)
+        val normalizedBitmap = runCatching {
+            BitmapCompatTool.normalizeIconBitmap(
+                bitmap = rule.iconBitmap,
+                outputSize = outputSize,
+                contentScale = STATUS_BAR_ICON_CONTENT_SCALE,
+                alphaThreshold = STATUS_BAR_ICON_ALPHA_THRESHOLD,
+            )
+        }.getOrElse { rule.iconBitmap }
+        return runCatching { Icon.createWithBitmap(normalizedBitmap) }.getOrNull()
+    }
+
+    private fun resolveStatusBarIconOutputSizePx(context: Context, source: Bitmap): Int {
+        val density = context.resources?.displayMetrics?.density ?: 0f
+        val dp24Px = (24f * density).roundToInt().coerceAtLeast(1)
+        return maxOf(
+            STATUS_BAR_ICON_MIN_OUTPUT_SIZE_PX,
+            dp24Px,
+            source.width,
+            source.height,
+        ).coerceIn(24, 192)
     }
 
     private fun remotePrefsOrNull(): SharedPreferences? = runCatching {
@@ -315,10 +312,11 @@ class ModuleMain : XposedModule() {
 
     private data class SystemUiMembers(
         val statusBarUpdateGrayScale: Method,
-        val statusBarControllerUpdateDrawable: Method,
-        val statusBarGetIcon: Method,
-        val statusBarNotificationField: Field,
         val statusBarSetIsIconColorable: Method,
+        val iconManagerGetIconDescriptor: Method,
+        val iconManagerIconBuilderField: Field,
+        val iconBuilderContextField: Field,
+        val notificationEntryGetSbn: Method,
         val statusBarIconField: Field,
         val statusBarPreloadedIconField: Field,
     ) {
@@ -341,10 +339,11 @@ class ModuleMain : XposedModule() {
 
                 val statusBarIconViewClass = load("com.android.systemui.statusbar.StatusBarIconView")
                     ?: return null
-                val statusBarIconControllerClass = load("com.oplus.systemui.statusbar.phone.StatusBarIconControllerExImpl")
-                    ?: return null
-                val statusBarIconClass = load("com.android.internal.statusbar.StatusBarIcon")
-                    ?: return null
+                val statusBarIconControllerClass = load("com.oplus.systemui.statusbar.phone.StatusBarIconControllerExImpl") ?: return null
+                val iconManagerClass = load("com.android.systemui.statusbar.notification.icon.IconManager") ?: return null
+                val iconBuilderClass = load("com.android.systemui.statusbar.notification.icon.IconBuilder") ?: return null
+                val notificationEntryClass = load("com.android.systemui.statusbar.notification.collection.NotificationEntry") ?: return null
+                val statusBarIconClass = load("com.android.internal.statusbar.StatusBarIcon") ?: return null
 
                 val statusBarUpdateGrayScale = ReflectHelper.findMethod(
                     statusBarIconControllerClass,
@@ -356,28 +355,23 @@ class ModuleMain : XposedModule() {
                     "member:statusbar.gray",
                     "未找到 StatusBarIconControllerExImpl.updateStatusBarIconGrayScale"
                 )
-                val statusBarControllerUpdateDrawable = ReflectHelper.findMethod(
-                    statusBarIconControllerClass,
-                    "updateStatusBarIconDrawable",
-                    Drawable::class.java,
-                    statusBarIconViewClass,
-                    StatusBarNotification::class.java,
-                ) ?: return warnMissing(
-                    "member:statusbar.controller.drawable",
-                    "未找到 StatusBarIconControllerExImpl.updateStatusBarIconDrawable"
-                )
-                val statusBarGetIcon = ReflectHelper.findMethod(
-                    statusBarIconViewClass,
-                    "getIcon",
-                    statusBarIconClass,
-                ) ?: return warnMissing("member:statusbar.getIcon", "未找到 StatusBarIconView.getIcon(StatusBarIcon)")
-                val statusBarNotificationField = ReflectHelper.findField(statusBarIconViewClass, "mNotification")
-                    ?: return warnMissing("member:statusbar.notification", "未找到 StatusBarIconView.mNotification")
                 val statusBarSetIsIconColorable = ReflectHelper.findMethod(
                     statusBarIconViewClass,
                     "setIsIconColorable",
                     Boolean::class.javaPrimitiveType!!,
                 ) ?: return warnMissing("member:statusbar.colorable", "未找到 StatusBarIconView.setIsIconColorable(boolean)")
+                val iconManagerGetIconDescriptor = ReflectHelper.findMethod(
+                    iconManagerClass,
+                    "getIconDescriptor",
+                    notificationEntryClass,
+                    Boolean::class.javaPrimitiveType!!,
+                ) ?: return warnMissing("member:iconmanager.getIconDescriptor", "未找到 IconManager.getIconDescriptor(NotificationEntry, boolean)")
+                val iconManagerIconBuilderField = ReflectHelper.findField(iconManagerClass, "iconBuilder")
+                    ?: return warnMissing("member:iconmanager.iconBuilder", "未找到 IconManager.iconBuilder")
+                val iconBuilderContextField = ReflectHelper.findField(iconBuilderClass, "context")
+                    ?: return warnMissing("member:iconbuilder.context", "未找到 IconBuilder.context")
+                val notificationEntryGetSbn = ReflectHelper.findMethod(notificationEntryClass, "getSbn")
+                    ?: return warnMissing("member:entry.getSbn", "未找到 NotificationEntry.getSbn()")
                 val statusBarIconField = ReflectHelper.findField(statusBarIconClass, "icon")
                     ?: return warnMissing("member:statusbar.icon", "未找到 StatusBarIcon.icon")
                 val statusBarPreloadedIconField = ReflectHelper.findField(statusBarIconClass, "preloadedIcon")
@@ -385,24 +379,17 @@ class ModuleMain : XposedModule() {
 
                 return SystemUiMembers(
                     statusBarUpdateGrayScale = statusBarUpdateGrayScale,
-                    statusBarControllerUpdateDrawable = statusBarControllerUpdateDrawable,
-                    statusBarGetIcon = statusBarGetIcon,
-                    statusBarNotificationField = statusBarNotificationField,
                     statusBarSetIsIconColorable = statusBarSetIsIconColorable,
+                    iconManagerGetIconDescriptor = iconManagerGetIconDescriptor,
+                    iconManagerIconBuilderField = iconManagerIconBuilderField,
+                    iconBuilderContextField = iconBuilderContextField,
+                    notificationEntryGetSbn = notificationEntryGetSbn,
                     statusBarIconField = statusBarIconField,
                     statusBarPreloadedIconField = statusBarPreloadedIconField,
                 )
             }
         }
     }
-
-    private data class ResolvedIcon(
-        val statusBarDrawable: Drawable,
-        val usesRule: Boolean,
-        val statusBarBitmap: Bitmap?,
-        val statusBarReplacementIcon: Icon?,
-        val shouldOverrideStatusBar: Boolean,
-    )
 
     private object ReflectHelper {
 

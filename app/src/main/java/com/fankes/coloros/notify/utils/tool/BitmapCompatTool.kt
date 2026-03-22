@@ -78,7 +78,7 @@ object BitmapCompatTool {
             RectF(destLeft, destTop, destLeft + destWidth, destTop + destHeight),
             Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
                 isFilterBitmap = true
-                isDither = true
+                isDither = false
             }
         )
         normalizedBitmapCache[cacheKey] = output
@@ -89,6 +89,7 @@ object BitmapCompatTool {
         cachedBitmapGrayscales[bitmap.generationId] ?: run {
             var height = bitmap.height
             var width = bitmap.width
+            var pixelSource: Bitmap = bitmap
             if (height > 64 || width > 64) {
                 if (tempCompactBitmap == null) {
                     tempCompactBitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
@@ -101,12 +102,11 @@ object BitmapCompatTool {
                 tempCompactBitmapCanvas?.drawBitmap(bitmap, tempMatrix, tempCompactBitmapPaint)
                 height = 64
                 width = 64
-                tempCompactBitmap?.getPixels(tempBuffer, 0, width, 0, 0, width, height)
-            } else {
-                ensureBufferSize(height * width)
-                bitmap.getPixels(tempBuffer, 0, width, 0, 0, width, height)
+                pixelSource = tempCompactBitmap ?: bitmap
             }
             val size = height * width
+            ensureBufferSize(size)
+            pixelSource.getPixels(tempBuffer, 0, width, 0, 0, width, height)
             for (index in 0 until size) {
                 if (!isGrayscaleColor(tempBuffer[index])) {
                     cachedBitmapGrayscales[bitmap.generationId] = false
