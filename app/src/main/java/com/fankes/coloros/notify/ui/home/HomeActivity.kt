@@ -16,7 +16,7 @@ import com.fankes.coloros.notify.framework.SystemUiRestarter
 import com.fankes.coloros.notify.rules.RuleRepository
 import com.fankes.coloros.notify.rules.RuleStore
 import com.fankes.coloros.notify.ui.rules.RulesActivity
-import com.fankes.coloros.notify.ui.theme.OStatusMiuixTheme
+import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
 import io.github.libxposed.service.XposedService
 
 class HomeActivity : ComponentActivity() {
@@ -39,7 +39,7 @@ class HomeActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            OStatusMiuixTheme {
+            ColorOSNotifyIconTheme {
                 HomeScreen(
                     state = uiState,
                     onSyncRules = ::syncRules,
@@ -95,10 +95,7 @@ class HomeActivity : ComponentActivity() {
             onShowMessage(getString(R.string.message_config_saved_local_pending))
             return
         }
-        uiState = uiState.copy(isConfigMirroring = true)
         mirrorToRemoteStore(service) { result ->
-            uiState = uiState.copy(isConfigMirroring = false)
-            refreshLocalState()
             result.onFailure {
                 onShowMessage(
                     getString(
@@ -130,7 +127,6 @@ class HomeActivity : ComponentActivity() {
                 uiState = uiState.copy(syncStage = RuleSyncStage.MirroringRemote)
                 mirrorToRemoteStore(service) { mirrorResult ->
                     uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
-                    refreshLocalState()
                     val message = mirrorResult.fold(
                         onSuccess = {
                             getString(
@@ -163,11 +159,7 @@ class HomeActivity : ComponentActivity() {
     private fun mirrorPendingRemoteStoreIfNeeded() {
         val service = currentService ?: return
         if (!RuleStore.hasPendingRemoteSync) return
-        uiState = uiState.copy(isConfigMirroring = true)
-        mirrorToRemoteStore(service) {
-            uiState = uiState.copy(isConfigMirroring = false)
-            refreshLocalState()
-        }
+        mirrorToRemoteStore(service)
     }
 
     private fun mirrorToRemoteStore(
@@ -176,7 +168,6 @@ class HomeActivity : ComponentActivity() {
         onResult: ((Result<RemoteRuleMirror.SyncResult>) -> Unit)? = null,
     ) {
         RemoteRuleMirror.syncAsync(service) { result ->
-            refreshLocalState()
             if (requestRefresh) {
                 result.onSuccess {
                     SystemUiRefreshSignal.request(this)

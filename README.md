@@ -1,8 +1,8 @@
-# OStatus - ColorOS 状态栏通知图标增强优化
+# ColorOSNotifyIcon - ColorOS 通知图标增强
 
 <img src="img-src/icon.png" width = "100" height = "100" alt="LOGO"/>
 
-基于 [ColorOS 通知图标增强](https://github.com/fankes/ColorOSNotifyIcon) 的精简重构版本，专注状态栏图标优化。
+基于 [ColorOS 通知图标增强](https://github.com/fankes/ColorOSNotifyIcon) 的精简重构版本，专注状态栏与通知中心图标优化。
 
 为 ColorOS 优化通知图标并适配原生通知图标规范。
 
@@ -22,10 +22,10 @@ This project will not be adapted i18n, please stay tuned for my new projects in 
 
 ## 重构内容
 
-相较于原版，OStatus 主要做了以下调整：
+相较于原版，ColorOSNotifyIcon 主要做了以下调整：
 
 - **迁移至 libxposed API 101**，移除 legacy Xposed / rovo89 API / YukiHookAPI 等历史兼容层
-- **去除冗余功能，仅优化状态栏图标**，通知中心保持 ColorOS 原版（修改通知中心图标反而突兀）
+- **收敛为通知图标优化模块**，统一处理状态栏与通知中心图标替换策略
 - **不再统一归一化在线规则图标**，恢复按在线规则原始图输出，避免部分图标在状态栏被额外放大
 - 作用域固定为：`system`、`com.android.systemui`
 - 不再提供旧版 ColorOS / Android 分支兼容逻辑
@@ -41,10 +41,10 @@ This project will not be adapted i18n, please stay tuned for my new projects in 
 ### 图标逻辑
 
 - **状态栏图标**：由模块接管，但不是简单地“原始图标 / 在线规则 / ColorOS 原版”三选一，而是按条件决定是否替换
+- **通知中心图标**：按同一套图标决策器处理，同时保留原生灰度小图标保护，避免把已经符合规范的图标强行替换
 - **原始灰度 `smallIcon` 优先恢复**：如果应用自己提供的原始 `smallIcon` 已经是灰度/单色图标，但 ColorOS 当前结果却变成了彩色图标，模块会优先恢复原始 `smallIcon`
 - **在线规则图标按条件覆盖**：如果命中在线规则且规则已启用，并且满足 `isEnabledAll = true` **或** 应用原始 `smallIcon` 不是灰度图标，则使用在线规则图标
 - **其余情况保留 ColorOS 当前结果**：如果既不需要恢复原始灰度 `smallIcon`，也没有命中可用的在线规则，模块不会继续强行改写，直接保留 ColorOS / SystemUI 当前计算出的状态栏图标
-- **通知中心图标**：保持 ColorOS 原版行为，不做额外改写
 
 ## 使用说明
 
@@ -69,7 +69,7 @@ This project will not be adapted i18n, please stay tuned for my new projects in 
 
 ColorOS 虽然支持原生通知图标规范，但系统与第三方推送长期存在彩色图标、风格不统一、系统强制替换小图标等问题，影响状态栏一致性与可读性。
 
-本重构版本选择收敛目标：只处理**状态栏图标优化**，尽量减少对通知中心与 SystemUI 热路径的侵入，以换取更稳定的行为和更低的额外功耗。
+本重构版本选择收敛目标：只处理**通知图标优化**，尽量减少对 SystemUI 热路径的侵入，以换取更稳定的行为和更低的额外功耗。
 
 ## 贡献通知图标优化名单
 

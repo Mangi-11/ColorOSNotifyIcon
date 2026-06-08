@@ -4,7 +4,7 @@ import android.app.Application
 import com.fankes.coloros.notify.framework.LsposedServiceBridge
 import com.fankes.coloros.notify.rules.RuleStore
 
-class OStatusApplication : Application() {
+class ColorOSNotifyIconApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()

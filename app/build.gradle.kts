@@ -62,7 +62,7 @@ androidComponents {
                 if (suffix.isNotBlank()) "-$suffix" else ""
             }
             val currentVersion = "${output.versionName.get()}$currentSuffix(${output.versionCode.get()})"
-            val artifactName = "OStatus"
+            val artifactName = "ColorOSNotifyIcon"
             if (output is com.android.build.api.variant.impl.VariantOutputImpl)
                 output.outputFileName.set("$artifactName-v$currentVersion-$currentType.apk")
         }

@@ -7,7 +7,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
 
 @Composable
-fun OStatusMiuixTheme(
+fun ColorOSNotifyIconTheme(
     darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {

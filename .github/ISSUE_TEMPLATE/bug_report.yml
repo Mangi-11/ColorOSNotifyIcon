@@ -1,5 +1,5 @@
 name: 问题与 BUG 反馈
-description: 反馈 OStatus 在当前支持环境下的问题
+description: 反馈 ColorOSNotifyIcon 在当前支持环境下的问题
 labels: [bug]
 title: "[BUG] "
 body:
@@ -8,7 +8,7 @@ body:
       value: |
         ### 请先确认环境范围
 
-        OStatus 当前仅维护 ColorOS 16 / Android 16（API 36）与 modern libxposed API 101 / LSPosed 环境。
+        ColorOSNotifyIcon 当前仅维护 ColorOS 16 / Android 16（API 36）与 modern libxposed API 101 / LSPosed 环境。
         旧版 Android、旧版 ColorOS、legacy Xposed API、非官方系统修改版不在当前维护范围内。
 
         发生异常、崩溃、闪退或功能性问题时，请提供包含 `ColorOSNotifyIcon` 的 LSPosed 日志。

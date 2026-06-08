@@ -1,22 +1,23 @@
 package com.fankes.coloros.notify.ui.home
 
 import android.content.res.Configuration
-import android.os.Build
-import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
-import top.yukonga.miuix.kmp.icon.extended.Refresh
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
@@ -25,24 +26,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.fankes.coloros.notify.BuildConfig
 import com.fankes.coloros.notify.R
-import com.fankes.coloros.notify.ui.theme.OStatusMiuixTheme
+import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.Icon
-
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
@@ -51,11 +54,20 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.Check
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.icon.extended.Download
+import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private const val SOFTWARE_VERSION_PROPERTY = "ro.build.display.id.show"
 
 @Composable
 fun HomeScreen(
@@ -94,7 +106,7 @@ fun HomeScreen(
             contentPadding = paddingValues,
         ) {
             item { SmallTitle(text = stringResource(R.string.section_module_status)) }
-            item { StatusCard(state = state, onRestartClick = { showRestartDialog = true }) }
+            item { StatusCard(state = state) }
             item { SmallTitle(text = stringResource(R.string.section_feature_settings)) }
             item {
                 SettingsCard(
@@ -117,6 +129,7 @@ fun HomeScreen(
                     state = state,
                     onOpenRules = onOpenRules,
                     onSyncRules = { onSyncRules(::showSnackbar) },
+                    onRestartClick = { showRestartDialog = true },
                 )
             }
             item { Spacer(modifier = Modifier.height(24.dp)) }
@@ -148,94 +161,148 @@ private fun SettingsCard(
     ) {
         ToggleComponent(
             title = stringResource(R.string.label_rules_enabled),
-            summary = if (state.isConfigMirroring) {
-                stringResource(R.string.label_config_mirroring)
-            } else if (state.isModuleActive) {
+            summary = if (state.isModuleActive) {
                 stringResource(R.string.label_rules_enabled_summary)
             } else {
                 stringResource(R.string.label_framework_waiting_summary)
             },
             checked = state.config.rulesEnabled,
-            enabled = !state.isConfigMirroring,
             onCheckedChange = onRulesEnabledChange,
         )
         ToggleComponent(
             title = stringResource(R.string.label_panel_icon_replacement_enabled),
             summary = stringResource(R.string.label_panel_icon_replacement_enabled_summary),
             checked = state.config.panelIconReplacementEnabled,
-            enabled = !state.isConfigMirroring,
             onCheckedChange = onPanelIconReplacementEnabledChange,
         )
         ToggleComponent(
             title = stringResource(R.string.label_oplus_push_special_handling_enabled),
             summary = stringResource(R.string.label_oplus_push_special_handling_enabled_summary),
             checked = state.config.oplusPushSpecialHandlingEnabled,
-            enabled = !state.isConfigMirroring && state.config.rulesEnabled,
+            enabled = state.config.rulesEnabled,
             onCheckedChange = onOplusPushSpecialHandlingEnabledChange,
         )
         ToggleComponent(
             title = stringResource(R.string.label_placeholder_icon_enabled),
             summary = stringResource(R.string.label_placeholder_icon_enabled_summary),
             checked = state.config.placeholderIconEnabled,
-            enabled = !state.isConfigMirroring && state.config.rulesEnabled,
+            enabled = state.config.rulesEnabled,
             onCheckedChange = onPlaceholderIconEnabledChange,
         )
     }
 }
 
 @Composable
-private fun StatusCard(
-    state: HomeScreenState,
-    onRestartClick: () -> Unit,
-) {
+private fun StatusCard(state: HomeScreenState) {
     val context = LocalContext.current
-    val indicatorColor = when {
-        !state.isModuleActive -> MiuixTheme.colorScheme.error
-        state.missingScopes.isNotEmpty() -> Color(0xFFFF9500)
-        else -> Color(0xFF34C759)
-    }
+    val moduleVersionText = stringResource(
+        R.string.status_hero_module_version,
+        BuildConfig.VERSION_NAME,
+        BuildConfig.VERSION_CODE,
+    )
+    val softwareVersionText = remember { softwareVersionText() }
+    val heroSpec = statusHeroSpec(context, state, moduleVersionText, softwareVersionText)
 
+    StatusHeroCard(spec = heroSpec)
+}
+
+@Composable
+private fun StatusHeroCard(spec: StatusHeroSpec) {
     Card(
         modifier = Modifier
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
+            .padding(horizontal = StatusHeroDefaults.OutsidePadding)
+            .padding(bottom = StatusHeroDefaults.OutsidePadding)
+            .fillMaxWidth(),
+        insideMargin = PaddingValues(),
+        colors = CardDefaults.defaultColors(
+            color = spec.containerColor,
+            contentColor = spec.accentColor,
+        ),
     ) {
-        BasicComponent(
-            title = stringResource(R.string.label_module),
-            summary = moduleStatusText(context, state),
-            startAction = {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(indicatorColor),
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = StatusHeroDefaults.MinHeight)
+                .squircleClip(CardDefaults.CornerRadius),
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .padding(StatusHeroDefaults.ContentPadding)
+                    .padding(end = StatusHeroDefaults.IconReserve),
+            ) {
+                Text(
+                    text = spec.status,
+                    style = MiuixTheme.textStyles.title1,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            },
-        )
-        BasicComponent(
-            title = stringResource(R.string.label_framework),
-            summary = frameworkStatusText(context, state),
-        )
-        BasicComponent(
-            title = stringResource(R.string.label_scope),
-            summary = scopeStatusText(context, state),
-        )
-        BasicComponent(
-            title = stringResource(R.string.label_version),
-            summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
-        )
-        BasicComponent(
-            title = stringResource(R.string.label_restart_systemui),
-            summary = stringResource(R.string.label_restart_summary),
-            endActions = {
-                Icon(
-                    imageVector = MiuixIcons.Refresh,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                Text(
+                    text = spec.versionLine,
+                    modifier = Modifier.padding(top = StatusHeroDefaults.TitleGap),
+                    style = MiuixTheme.textStyles.title4,
+                    color = MiuixTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            },
-            onClick = onRestartClick,
+            }
+            Text(
+                text = spec.footnote,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(StatusHeroDefaults.ContentPadding)
+                    .padding(end = StatusHeroDefaults.IconReserve),
+                style = MiuixTheme.textStyles.body2,
+                color = MiuixTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            StatusHeroGlyph(
+                spec = spec,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(
+                        x = StatusHeroDefaults.IconOffset,
+                        y = StatusHeroDefaults.IconOffset,
+                    )
+                    .graphicsLayer { alpha = StatusHeroDefaults.IconAlpha },
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusHeroGlyph(
+    spec: StatusHeroSpec,
+    modifier: Modifier = Modifier,
+) {
+    if (spec.showCheckRing) {
+        Box(
+            modifier = modifier
+                .size(StatusHeroDefaults.IconSize)
+                .border(
+                    width = StatusHeroDefaults.IconStroke,
+                    color = spec.accentColor,
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = spec.icon,
+                contentDescription = null,
+                modifier = Modifier.size(StatusHeroDefaults.CheckIconSize),
+                tint = spec.accentColor,
+            )
+        }
+    } else {
+        Icon(
+            imageVector = spec.icon,
+            contentDescription = null,
+            modifier = modifier.size(StatusHeroDefaults.IconSize),
+            tint = spec.accentColor,
         )
     }
 }
@@ -245,6 +312,7 @@ private fun RulesCard(
     state: HomeScreenState,
     onOpenRules: () -> Unit,
     onSyncRules: () -> Unit,
+    onRestartClick: () -> Unit,
 ) {
     val lastSyncText = remember(state.rulesUpdatedAt) {
         if (state.rulesUpdatedAt > 0L) {
@@ -262,11 +330,11 @@ private fun RulesCard(
     ) {
         BasicComponent(
             title = stringResource(R.string.label_local_rules_short),
-            summary = stringResource(R.string.label_rules_count, state.rulesCount),
-        )
-        BasicComponent(
-            title = stringResource(R.string.label_last_sync_short),
-            summary = lastSyncText ?: stringResource(R.string.label_never_synced),
+            summary = if (lastSyncText == null) {
+                stringResource(R.string.label_rules_snapshot_never, state.rulesCount)
+            } else {
+                stringResource(R.string.label_rules_snapshot_synced, state.rulesCount, lastSyncText)
+            },
         )
         BasicComponent(
             title = stringResource(R.string.label_manage_rules),
@@ -291,7 +359,7 @@ private fun RulesCard(
             endActions = if (!state.isSyncing) {
                 {
                     Icon(
-                        imageVector = MiuixIcons.ChevronForward,
+                        imageVector = MiuixIcons.Download,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
                         tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
@@ -300,6 +368,19 @@ private fun RulesCard(
             } else null,
             onClick = onSyncRules,
             enabled = !state.isSyncing,
+        )
+        BasicComponent(
+            title = stringResource(R.string.label_restart_systemui),
+            summary = stringResource(R.string.label_restart_summary),
+            endActions = {
+                Icon(
+                    imageVector = MiuixIcons.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                )
+            },
+            onClick = onRestartClick,
         )
     }
 }
@@ -318,12 +399,10 @@ private fun ToggleComponent(
         endActions = {
             Switch(
                 checked = checked,
-                onCheckedChange = null,
+                onCheckedChange = onCheckedChange,
                 enabled = enabled,
             )
         },
-        onClick = { if (enabled) onCheckedChange(!checked) },
-        role = Role.Switch,
         enabled = enabled,
     )
 }
@@ -357,56 +436,107 @@ private fun RestartDialog(
     }
 }
 
-private fun moduleStatusText(
+@Composable
+private fun statusHeroSpec(
     context: android.content.Context,
     state: HomeScreenState,
-): String {
-    val missingScopes = state.missingScopes.joinToString()
-    return when {
-        !state.isModuleActive -> context.getString(R.string.status_module_not_connected)
-        state.missingScopes.isNotEmpty() ->
-            context.getString(R.string.status_module_connected_missing_scopes, missingScopes)
-        else -> context.getString(R.string.status_module_connected_ready)
-    }
-}
-
-private fun frameworkStatusText(
-    context: android.content.Context,
-    state: HomeScreenState,
-): String {
+    moduleVersionText: String,
+    softwareVersionText: String,
+): StatusHeroSpec {
     val frameworkConnection = state.frameworkConnection
-    return if (frameworkConnection == null) {
-        context.getString(R.string.status_framework_not_connected)
-    } else {
-        context.getString(
-            R.string.status_framework_connected,
-            frameworkConnection.name,
-            frameworkConnection.version,
-            frameworkConnection.apiVersion,
-        )
-    }
-}
-
-private fun scopeStatusText(
-    context: android.content.Context,
-    state: HomeScreenState,
-): String {
-    return if (state.frameworkConnection == null) {
-        context.getString(R.string.status_scope_unavailable)
-    } else {
-        val scopeLabel = if (state.grantedScopes.isEmpty()) {
-            context.getString(R.string.label_none)
-        } else {
-            state.grantedScopes.joinToString()
+    val successColor = Color(0xFF34C759)
+    val warningColor = Color(0xFFFF9500)
+    return when {
+        frameworkConnection == null -> {
+            val accentColor = MiuixTheme.colorScheme.error
+            StatusHeroSpec(
+                status = context.getString(R.string.status_hero_inactive_title),
+                versionLine = moduleVersionText,
+                footnote = context.getString(R.string.status_hero_inactive_detail),
+                accentColor = accentColor,
+                containerColor = accentColor.copy(alpha = StatusHeroDefaults.ContainerAlpha),
+                icon = MiuixIcons.Info,
+                showCheckRing = false,
+            )
         }
-        context.getString(R.string.status_scope_granted, scopeLabel)
+        state.missingScopes.isNotEmpty() -> {
+            StatusHeroSpec(
+                status = context.getString(R.string.status_hero_missing_scopes_title),
+                versionLine = moduleApiText(
+                    context = context,
+                    moduleVersionText = moduleVersionText,
+                    apiVersion = frameworkConnection.apiVersion,
+                ),
+                footnote = context.getString(
+                    R.string.status_hero_missing_scopes_detail,
+                    state.missingScopes.joinToString(),
+                ),
+                accentColor = warningColor,
+                containerColor = warningColor.copy(alpha = StatusHeroDefaults.ContainerAlpha),
+                icon = MiuixIcons.Info,
+                showCheckRing = false,
+            )
+        }
+        else -> {
+            StatusHeroSpec(
+                status = context.getString(R.string.status_hero_active_title),
+                versionLine = moduleApiText(
+                    context = context,
+                    moduleVersionText = moduleVersionText,
+                    apiVersion = frameworkConnection.apiVersion,
+                ),
+                footnote = softwareVersionText,
+                accentColor = successColor,
+                containerColor = successColor.copy(alpha = StatusHeroDefaults.ContainerAlpha),
+                icon = MiuixIcons.Basic.Check,
+                showCheckRing = true,
+            )
+        }
     }
 }
 
-private fun syncButtonTextRes(syncStage: RuleSyncStage): Int = when (syncStage) {
-    RuleSyncStage.Idle -> R.string.button_sync_rules
-    RuleSyncStage.SyncingRules -> R.string.button_syncing_rules
-    RuleSyncStage.MirroringRemote -> R.string.button_mirroring_rules
+private fun moduleApiText(
+    context: android.content.Context,
+    moduleVersionText: String,
+    apiVersion: Int,
+): String = context.getString(
+    R.string.status_hero_module_api,
+    moduleVersionText,
+    apiVersion,
+)
+
+private data class StatusHeroSpec(
+    val status: String,
+    val versionLine: String,
+    val footnote: String,
+    val accentColor: Color,
+    val containerColor: Color,
+    val icon: ImageVector,
+    val showCheckRing: Boolean,
+)
+
+private fun softwareVersionText(): String {
+    val softwareVersion = systemProperty(SOFTWARE_VERSION_PROPERTY).trim()
+    return softwareVersion
+}
+
+private fun systemProperty(name: String): String =
+    Class.forName("android.os.SystemProperties")
+        .getMethod("get", String::class.java)
+        .invoke(null, name) as String
+
+private object StatusHeroDefaults {
+    val OutsidePadding = 12.dp
+    val ContentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
+    val MinHeight = 144.dp
+    val IconReserve = 116.dp
+    val IconSize = 116.dp
+    val CheckIconSize = 84.dp
+    val IconOffset = 24.dp
+    val IconStroke = 4.dp
+    val TitleGap = 6.dp
+    const val ContainerAlpha = 0.16f
+    const val IconAlpha = 0.72f
 }
 
 @Preview(
@@ -417,7 +547,7 @@ private fun syncButtonTextRes(syncStage: RuleSyncStage): Int = when (syncStage) 
 )
 @Composable
 private fun HomeScreenLightPreview() {
-    OStatusMiuixTheme(darkTheme = false) {
+    ColorOSNotifyIconTheme(darkTheme = false) {
         HomeScreen(
             state = HomeScreenState(
                 rulesCount = 128,
@@ -444,7 +574,7 @@ private fun HomeScreenLightPreview() {
 )
 @Composable
 private fun HomeScreenDarkPreview() {
-    OStatusMiuixTheme(darkTheme = true) {
+    ColorOSNotifyIconTheme(darkTheme = true) {
         HomeScreen(
             state = HomeScreenState(
                 rulesCount = 256,
@@ -470,7 +600,7 @@ private fun HomeScreenDarkPreview() {
 )
 @Composable
 private fun HomeScreenEmptyPreview() {
-    OStatusMiuixTheme(darkTheme = false) {
+    ColorOSNotifyIconTheme(darkTheme = false) {
         HomeScreen(
             state = HomeScreenState(
                 rulesCount = 0,

@@ -13,7 +13,7 @@ import com.fankes.coloros.notify.framework.RemoteRuleMirror
 import com.fankes.coloros.notify.framework.SystemUiRefreshSignal
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
-import com.fankes.coloros.notify.ui.theme.OStatusMiuixTheme
+import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
 import io.github.libxposed.service.XposedService
 
 class RulesActivity : ComponentActivity() {
@@ -36,7 +36,7 @@ class RulesActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            OStatusMiuixTheme {
+            ColorOSNotifyIconTheme {
                 RuleListScreen(
                     state = uiState,
                     onBack = ::finish,
@@ -53,7 +53,6 @@ class RulesActivity : ComponentActivity() {
         uiState = uiState.copy(
             rules = RuleStore.rules,
             config = RuleStore.moduleConfig,
-            isFrameworkConnected = currentService != null,
         )
     }
 
@@ -63,25 +62,29 @@ class RulesActivity : ComponentActivity() {
 
     private fun setRuleEnabled(rule: IconRule, enabled: Boolean, onShowMessage: (String) -> Unit) {
         RuleStore.setRuleEnabled(rule.packageName, enabled)
-        onConfigChanged(onShowMessage)
+        uiState = uiState.copy(
+            rules = uiState.rules.mapRule(rule.packageName) { it.copy(isEnabled = enabled) },
+            config = RuleStore.moduleConfig,
+        )
+        mirrorConfigChanged(onShowMessage)
     }
 
     private fun setRuleEnabledAll(rule: IconRule, enabledAll: Boolean, onShowMessage: (String) -> Unit) {
         RuleStore.setRuleEnabledAll(rule.packageName, enabledAll)
-        onConfigChanged(onShowMessage)
+        uiState = uiState.copy(
+            rules = uiState.rules.mapRule(rule.packageName) { it.copy(isEnabledAll = enabledAll) },
+            config = RuleStore.moduleConfig,
+        )
+        mirrorConfigChanged(onShowMessage)
     }
 
-    private fun onConfigChanged(onShowMessage: (String) -> Unit) {
-        refreshState()
+    private fun mirrorConfigChanged(onShowMessage: (String) -> Unit) {
         val service = currentService
         if (service == null) {
             onShowMessage(getString(R.string.message_config_saved_local_pending))
             return
         }
-        uiState = uiState.copy(isMirroring = true)
         RemoteRuleMirror.syncAsync(service) { result ->
-            uiState = uiState.copy(isMirroring = false)
-            refreshState()
             result.onSuccess {
                 SystemUiRefreshSignal.request(this)
             }
@@ -99,10 +102,7 @@ class RulesActivity : ComponentActivity() {
     private fun mirrorPendingRemoteStoreIfNeeded() {
         val service = currentService ?: return
         if (!RuleStore.hasPendingRemoteSync) return
-        uiState = uiState.copy(isMirroring = true)
         RemoteRuleMirror.syncAsync(service) { result ->
-            uiState = uiState.copy(isMirroring = false)
-            refreshState()
             result.onSuccess {
                 SystemUiRefreshSignal.request(this)
             }
@@ -117,5 +117,12 @@ class RulesActivity : ComponentActivity() {
     override fun onStop() {
         LsposedServiceBridge.removeListener(frameworkListener)
         super.onStop()
+    }
+
+    private fun List<IconRule>.mapRule(
+        packageName: String,
+        transform: (IconRule) -> IconRule,
+    ) = map { rule ->
+        if (rule.packageName == packageName) transform(rule) else rule
     }
 }

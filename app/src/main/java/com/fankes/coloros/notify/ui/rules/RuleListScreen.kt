@@ -31,13 +31,12 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.fankes.coloros.notify.R
 import com.fankes.coloros.notify.rules.IconRule
-import com.fankes.coloros.notify.ui.theme.OStatusMiuixTheme
+import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
@@ -47,6 +46,7 @@ import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SearchBar
+import top.yukonga.miuix.kmp.basic.SearchBarDefaults
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
@@ -77,7 +77,7 @@ fun RuleListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = stringResource(R.string.app_name),
+                title = stringResource(R.string.rules_title),
                 largeTitle = stringResource(R.string.rules_title),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -102,6 +102,7 @@ fun RuleListScreen(
         ) {
             item {
                 SearchBar(
+                    modifier = Modifier.padding(bottom = SearchBarDefaults.InsideMargin.width),
                     inputField = {
                         InputField(
                             query = state.query,
@@ -117,6 +118,7 @@ fun RuleListScreen(
                     outsideEndAction = {
                         TextButton(
                             text = stringResource(R.string.dialog_cancel),
+                            modifier = Modifier.padding(end = SearchBarDefaults.InsideMargin.width),
                             onClick = {
                                 onQueryChange("")
                                 searchExpanded = false
@@ -266,12 +268,10 @@ private fun ToggleComponent(
         endActions = {
             Switch(
                 checked = checked,
-                onCheckedChange = null,
+                onCheckedChange = onCheckedChange,
                 enabled = enabled,
             )
         },
-        onClick = { if (enabled) onCheckedChange(!checked) },
-        role = Role.Switch,
         enabled = enabled,
     )
 }
@@ -306,7 +306,7 @@ private fun EmptyRulesCard(query: String) {
 @Preview(showBackground = true, widthDp = 393, heightDp = 852)
 @Composable
 private fun RuleListScreenPreview() {
-    OStatusMiuixTheme {
+    ColorOSNotifyIconTheme {
         RuleListScreen(
             state = RuleListState(),
             onBack = {},
