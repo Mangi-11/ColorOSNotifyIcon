@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.fankes.coloros.notify.BuildConfig
@@ -45,6 +46,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
@@ -61,6 +63,10 @@ fun HomeScreen(
     onSyncRules: ((String) -> Unit) -> Unit,
     onRestartSystemUi: ((String) -> Unit) -> Unit,
     onOpenRules: () -> Unit,
+    onRulesEnabledChange: (Boolean, (String) -> Unit) -> Unit,
+    onPanelIconReplacementEnabledChange: (Boolean, (String) -> Unit) -> Unit,
+    onOplusPushSpecialHandlingEnabledChange: (Boolean, (String) -> Unit) -> Unit,
+    onPlaceholderIconEnabledChange: (Boolean, (String) -> Unit) -> Unit,
 ) {
     var showRestartDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -89,6 +95,22 @@ fun HomeScreen(
         ) {
             item { SmallTitle(text = stringResource(R.string.section_module_status)) }
             item { StatusCard(state = state, onRestartClick = { showRestartDialog = true }) }
+            item { SmallTitle(text = stringResource(R.string.section_feature_settings)) }
+            item {
+                SettingsCard(
+                    state = state,
+                    onRulesEnabledChange = { onRulesEnabledChange(it, ::showSnackbar) },
+                    onPanelIconReplacementEnabledChange = {
+                        onPanelIconReplacementEnabledChange(it, ::showSnackbar)
+                    },
+                    onOplusPushSpecialHandlingEnabledChange = {
+                        onOplusPushSpecialHandlingEnabledChange(it, ::showSnackbar)
+                    },
+                    onPlaceholderIconEnabledChange = {
+                        onPlaceholderIconEnabledChange(it, ::showSnackbar)
+                    },
+                )
+            }
             item { SmallTitle(text = stringResource(R.string.section_rules_data)) }
             item {
                 RulesCard(
@@ -99,16 +121,66 @@ fun HomeScreen(
             }
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
-    }
 
-    RestartDialog(
-        show = showRestartDialog,
-        onDismiss = { showRestartDialog = false },
-        onConfirm = {
-            showRestartDialog = false
-            onRestartSystemUi(::showSnackbar)
-        },
-    )
+        RestartDialog(
+            show = showRestartDialog,
+            onDismiss = { showRestartDialog = false },
+            onConfirm = {
+                showRestartDialog = false
+                onRestartSystemUi(::showSnackbar)
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsCard(
+    state: HomeScreenState,
+    onRulesEnabledChange: (Boolean) -> Unit,
+    onPanelIconReplacementEnabledChange: (Boolean) -> Unit,
+    onOplusPushSpecialHandlingEnabledChange: (Boolean) -> Unit,
+    onPlaceholderIconEnabledChange: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 12.dp),
+    ) {
+        ToggleComponent(
+            title = stringResource(R.string.label_rules_enabled),
+            summary = if (state.isConfigMirroring) {
+                stringResource(R.string.label_config_mirroring)
+            } else if (state.isModuleActive) {
+                stringResource(R.string.label_rules_enabled_summary)
+            } else {
+                stringResource(R.string.label_framework_waiting_summary)
+            },
+            checked = state.config.rulesEnabled,
+            enabled = !state.isConfigMirroring,
+            onCheckedChange = onRulesEnabledChange,
+        )
+        ToggleComponent(
+            title = stringResource(R.string.label_panel_icon_replacement_enabled),
+            summary = stringResource(R.string.label_panel_icon_replacement_enabled_summary),
+            checked = state.config.panelIconReplacementEnabled,
+            enabled = !state.isConfigMirroring,
+            onCheckedChange = onPanelIconReplacementEnabledChange,
+        )
+        ToggleComponent(
+            title = stringResource(R.string.label_oplus_push_special_handling_enabled),
+            summary = stringResource(R.string.label_oplus_push_special_handling_enabled_summary),
+            checked = state.config.oplusPushSpecialHandlingEnabled,
+            enabled = !state.isConfigMirroring && state.config.rulesEnabled,
+            onCheckedChange = onOplusPushSpecialHandlingEnabledChange,
+        )
+        ToggleComponent(
+            title = stringResource(R.string.label_placeholder_icon_enabled),
+            summary = stringResource(R.string.label_placeholder_icon_enabled_summary),
+            checked = state.config.placeholderIconEnabled,
+            enabled = !state.isConfigMirroring && state.config.rulesEnabled,
+            onCheckedChange = onPlaceholderIconEnabledChange,
+        )
+    }
 }
 
 @Composable
@@ -164,12 +236,6 @@ private fun StatusCard(
                 )
             },
             onClick = onRestartClick,
-        )
-        Text(
-            text = stringResource(R.string.label_manager_control_hint),
-            style = MiuixTheme.textStyles.footnote1,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
         )
     }
 }
@@ -236,6 +302,30 @@ private fun RulesCard(
             enabled = !state.isSyncing,
         )
     }
+}
+
+@Composable
+private fun ToggleComponent(
+    title: String,
+    summary: String,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    BasicComponent(
+        title = title,
+        summary = summary,
+        endActions = {
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+                enabled = enabled,
+            )
+        },
+        onClick = { if (enabled) onCheckedChange(!checked) },
+        role = Role.Switch,
+        enabled = enabled,
+    )
 }
 
 @Composable
@@ -337,6 +427,10 @@ private fun HomeScreenLightPreview() {
             onSyncRules = {},
             onRestartSystemUi = {},
             onOpenRules = {},
+            onRulesEnabledChange = { _, _ -> },
+            onPanelIconReplacementEnabledChange = { _, _ -> },
+            onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
+            onPlaceholderIconEnabledChange = { _, _ -> },
         )
     }
 }
@@ -360,6 +454,10 @@ private fun HomeScreenDarkPreview() {
             onSyncRules = {},
             onRestartSystemUi = {},
             onOpenRules = {},
+            onRulesEnabledChange = { _, _ -> },
+            onPanelIconReplacementEnabledChange = { _, _ -> },
+            onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
+            onPlaceholderIconEnabledChange = { _, _ -> },
         )
     }
 }
@@ -382,6 +480,10 @@ private fun HomeScreenEmptyPreview() {
             onSyncRules = {},
             onRestartSystemUi = {},
             onOpenRules = {},
+            onRulesEnabledChange = { _, _ -> },
+            onPanelIconReplacementEnabledChange = { _, _ -> },
+            onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
+            onPlaceholderIconEnabledChange = { _, _ -> },
         )
     }
 }

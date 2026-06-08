@@ -1,6 +1,7 @@
 package com.fankes.coloros.notify.ui.home
 
 import com.fankes.coloros.notify.core.SystemPackages
+import com.fankes.coloros.notify.rules.RuleStore
 
 enum class RuleSyncStage {
     Idle,
@@ -19,6 +20,8 @@ data class HomeScreenState(
     val frameworkConnection: FrameworkConnection? = null,
     val rulesCount: Int = 0,
     val rulesUpdatedAt: Long = 0L,
+    val config: RuleStore.ModuleConfig = RuleStore.ModuleConfig(),
+    val isConfigMirroring: Boolean = false,
     val syncStage: RuleSyncStage = RuleSyncStage.Idle,
 ) {
     val isModuleActive: Boolean

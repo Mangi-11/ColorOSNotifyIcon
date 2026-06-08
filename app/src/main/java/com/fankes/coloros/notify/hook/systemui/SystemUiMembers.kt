@@ -3,6 +3,7 @@ package com.fankes.coloros.notify.hook.systemui
 import android.graphics.drawable.Drawable
 import android.service.notification.StatusBarNotification
 import com.fankes.coloros.notify.hook.reflect.Reflection
+import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
@@ -15,6 +16,16 @@ internal data class SystemUiMembers(
     val notificationEntryGetSbn: Method,
     val statusBarIconField: Field,
     val statusBarPreloadedIconField: Field,
+    val notificationHeaderOnContentUpdated: Method?,
+    val notificationHeaderResolveHeaderViews: Method?,
+    val notificationHeaderGetIcon: Method?,
+    val notificationViewWrapperRowField: Field?,
+    val expandableRowGetEntry: Method?,
+    val oplusGroupInitIcon: Method?,
+    val oplusGroupResolveHeaderViews: Method?,
+    val viewConfigCoordinatorConstructors: List<Constructor<*>>,
+    val viewConfigCoordinatorAttach: Method?,
+    val viewConfigCoordinatorRefreshNotifications: Method?,
 ) {
     companion object {
         fun resolve(
@@ -30,6 +41,10 @@ internal data class SystemUiMembers(
                 warn("class:$name", "未找到类：$name", it)
             }
 
+            fun loadOptional(name: String): Class<*>? = runCatching {
+                Class.forName(name, false, classLoader)
+            }.getOrNull()
+
             val statusBarIconViewClass = load("com.android.systemui.statusbar.StatusBarIconView")
                 ?: return null
             val statusBarIconControllerClass = load("com.oplus.systemui.statusbar.phone.StatusBarIconControllerExImpl")
@@ -42,6 +57,18 @@ internal data class SystemUiMembers(
                 ?: return null
             val statusBarIconClass = load("com.android.internal.statusbar.StatusBarIcon")
                 ?: return null
+            val expandableNotificationRowClass =
+                loadOptional("com.android.systemui.statusbar.notification.row.ExpandableNotificationRow")
+            val notificationViewWrapperClass =
+                loadOptional("com.android.systemui.statusbar.notification.row.wrapper.NotificationViewWrapper")
+            val notificationHeaderViewWrapperClass =
+                loadOptional("com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper")
+            val oplusGroupTemplateWrapperClass =
+                loadOptional("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupTemplateWrapper")
+            val viewConfigCoordinatorClass =
+                loadOptional("com.android.systemui.statusbar.notification.collection.coordinator.ViewConfigCoordinator")
+            val notifPipelineClass =
+                loadOptional("com.android.systemui.statusbar.notification.collection.NotifPipeline")
 
             val statusBarUpdateGrayScale = Reflection.findMethod(
                 statusBarIconControllerClass,
@@ -77,6 +104,31 @@ internal data class SystemUiMembers(
                 ?: return warnMissing("member:statusbar.icon", "未找到 StatusBarIcon.icon")
             val statusBarPreloadedIconField = Reflection.findField(statusBarIconClass, "preloadedIcon")
                 ?: return warnMissing("member:statusbar.preloaded", "未找到 StatusBarIcon.preloadedIcon")
+            val notificationHeaderOnContentUpdated = notificationHeaderViewWrapperClass
+                ?.takeIf { expandableNotificationRowClass != null }
+                ?.let { Reflection.findMethod(it, "onContentUpdated", expandableNotificationRowClass!!) }
+            val notificationHeaderResolveHeaderViews = notificationHeaderViewWrapperClass
+                ?.let { Reflection.findMethod(it, "resolveHeaderViews") }
+            val notificationHeaderGetIcon = notificationHeaderViewWrapperClass
+                ?.let { Reflection.findMethod(it, "getIcon") }
+            val notificationViewWrapperRowField = notificationViewWrapperClass
+                ?.let { Reflection.findField(it, "mRow") }
+            val expandableRowGetEntry = expandableNotificationRowClass
+                ?.let { Reflection.findMethod(it, "getEntry") }
+            val oplusGroupInitIcon = oplusGroupTemplateWrapperClass
+                ?.let { Reflection.findMethod(it, "initIcon") }
+            val oplusGroupResolveHeaderViews = oplusGroupTemplateWrapperClass
+                ?.let { Reflection.findMethod(it, "resolveHeaderViews") }
+            val viewConfigCoordinatorAttach = viewConfigCoordinatorClass
+                ?.takeIf { notifPipelineClass != null }
+                ?.let { Reflection.findMethod(it, "attach", notifPipelineClass!!) }
+            val viewConfigCoordinatorRefreshNotifications = viewConfigCoordinatorClass
+                ?.let { Reflection.findMethod(it, "updateNotificationsOnDensityOrFontScaleChanged") }
+            val viewConfigCoordinatorConstructors = viewConfigCoordinatorClass
+                ?.declaredConstructors
+                ?.onEach { it.isAccessible = true }
+                ?.toList()
+                .orEmpty()
 
             return SystemUiMembers(
                 statusBarUpdateGrayScale = statusBarUpdateGrayScale,
@@ -87,6 +139,16 @@ internal data class SystemUiMembers(
                 notificationEntryGetSbn = notificationEntryGetSbn,
                 statusBarIconField = statusBarIconField,
                 statusBarPreloadedIconField = statusBarPreloadedIconField,
+                notificationHeaderOnContentUpdated = notificationHeaderOnContentUpdated,
+                notificationHeaderResolveHeaderViews = notificationHeaderResolveHeaderViews,
+                notificationHeaderGetIcon = notificationHeaderGetIcon,
+                notificationViewWrapperRowField = notificationViewWrapperRowField,
+                expandableRowGetEntry = expandableRowGetEntry,
+                oplusGroupInitIcon = oplusGroupInitIcon,
+                oplusGroupResolveHeaderViews = oplusGroupResolveHeaderViews,
+                viewConfigCoordinatorConstructors = viewConfigCoordinatorConstructors,
+                viewConfigCoordinatorAttach = viewConfigCoordinatorAttach,
+                viewConfigCoordinatorRefreshNotifications = viewConfigCoordinatorRefreshNotifications,
             )
         }
     }

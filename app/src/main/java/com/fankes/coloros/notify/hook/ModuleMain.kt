@@ -1,16 +1,22 @@
 package com.fankes.coloros.notify.hook
 
 import android.app.Notification
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
+import android.os.Build
 import android.service.notification.StatusBarNotification
 import android.util.Log
+import android.widget.ImageView
 import androidx.core.os.BundleCompat
 import com.fankes.coloros.notify.core.ModuleInfo
 import com.fankes.coloros.notify.core.SystemPackages
 import com.fankes.coloros.notify.hook.icon.IconBitmapClassifier
+import com.fankes.coloros.notify.hook.icon.NotificationIconResolver
 import com.fankes.coloros.notify.hook.reflect.Reflection
 import com.fankes.coloros.notify.hook.systemui.SystemUiMembers
 import com.fankes.coloros.notify.rules.IconRule
@@ -33,6 +39,9 @@ class ModuleMain : XposedModule() {
     private var systemUiInstalled = false
     private var systemUiConfig = RuleStore.ModuleConfig()
     private var systemUiRules: Map<String, IconRule> = emptyMap()
+    private var notificationRefreshCoordinator: Any? = null
+    private var systemUiRefreshReceiver: BroadcastReceiver? = null
+    private var systemUiRefreshReceiverRegistered = false
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
         emitLog(
@@ -62,7 +71,7 @@ class ModuleMain : XposedModule() {
         ).associateBy { it.packageName }
         emitLog(
             Log.INFO,
-            "SystemUI 配置已加载：enabled=${systemUiConfig.moduleEnabled}, rulesEnabled=${systemUiConfig.rulesEnabled}, rules=${systemUiRules.size}"
+            "SystemUI 配置已加载：enabled=${systemUiConfig.moduleEnabled}, rulesEnabled=${systemUiConfig.rulesEnabled}, panelEnabled=${systemUiConfig.panelIconReplacementEnabled}, oplusPush=${systemUiConfig.oplusPushSpecialHandlingEnabled}, placeholder=${systemUiConfig.placeholderIconEnabled}, rules=${systemUiRules.size}"
         )
         val mirroredRuleCount = remotePrefs?.getInt(RuleStore.KEY_RULES_COUNT, 0) ?: 0
         if (rulesJson.isBlank() && mirroredRuleCount > 0) {
@@ -111,6 +120,7 @@ class ModuleMain : XposedModule() {
             return false
         }
         val members = SystemUiMembers.resolve(classLoader, ::warnOnce) ?: return false
+        installSystemUiConfigRefreshHook(members)
 
         loadClassOrNull(
             "com.oplus.systemui.statusbar.notification.util.OplusNotificationSmallIconUtil",
@@ -151,13 +161,19 @@ class ModuleMain : XposedModule() {
                 val iconBuilder = members.iconManagerIconBuilderField.get(iconManager)
                 members.iconBuilderContextField.get(iconBuilder) as? Context
             }.getOrNull() ?: return@intercept statusBarIcon
+            ensureSystemUiRefreshReceiver(context, members)
             val sbn = runCatching {
                 members.notificationEntryGetSbn.invoke(notificationEntry) as? StatusBarNotification
             }.getOrNull() ?: return@intercept statusBarIcon
             val currentStatusBarIcon = runCatching {
                 members.statusBarIconField.get(statusBarIcon) as? Icon
             }.getOrNull()
-            val replacementIcon = resolveStatusBarReplacementIcon(context, sbn, currentStatusBarIcon)
+            val replacementIcon = iconResolver().resolveStatusBarIcon(
+                context = context,
+                sbn = sbn,
+                originalSmallIcon = originalSmallIconOf(sbn),
+                currentStatusBarIcon = currentStatusBarIcon,
+            )
                 ?: return@intercept statusBarIcon
             runCatching {
                 members.statusBarIconField.set(statusBarIcon, replacementIcon)
@@ -171,40 +187,179 @@ class ModuleMain : XposedModule() {
             Log.INFO,
             "SystemUI Hook 已安装：状态栏图标路径（IconManager.getIconDescriptor）"
         )
+        installNotificationPanelHooks(members)
         return true
     }
 
-    private fun resolveStatusBarReplacementIcon(
-        context: Context,
-        sbn: StatusBarNotification,
-        currentStatusBarIcon: Icon?,
-    ): Icon? {
-        val packageName = sbn.packageName.orEmpty()
+    private fun installSystemUiConfigRefreshHook(members: SystemUiMembers) {
+        members.viewConfigCoordinatorConstructors.forEach { constructor ->
+            runCatching {
+                hook(constructor).intercept { chain ->
+                    val result = chain.proceed()
+                    notificationRefreshCoordinator = chain.thisObject ?: notificationRefreshCoordinator
+                    result
+                }
+            }.onFailure {
+                warnOnce("systemui.refresh.constructor", "安装 ViewConfigCoordinator 构造函数 Hook 失败", it)
+            }
+        }
+        members.viewConfigCoordinatorAttach?.let { method ->
+            runCatching {
+                hook(method).intercept { chain ->
+                    val result = chain.proceed()
+                    notificationRefreshCoordinator = chain.thisObject ?: notificationRefreshCoordinator
+                    result
+                }
+            }.onFailure {
+                warnOnce("systemui.refresh.attach", "安装 ViewConfigCoordinator.attach Hook 失败", it)
+            }
+        }
+        if (members.viewConfigCoordinatorRefreshNotifications == null) {
+            warnOnce(
+                "systemui.refresh.member.missing",
+                "未找到 ViewConfigCoordinator.updateNotificationsOnDensityOrFontScaleChanged，配置变更将等待通知自身刷新"
+            )
+            return
+        }
+        infoOnce("systemui.refresh.hook", "SystemUI Hook 已安装：配置变更刷新路径（ViewConfigCoordinator）")
+    }
+
+    private fun installNotificationPanelHooks(members: SystemUiMembers) {
+        members.notificationHeaderOnContentUpdated?.let { method ->
+            hook(method).intercept { chain ->
+                val result = chain.proceed()
+                val wrapper = chain.thisObject ?: return@intercept result
+                applyPanelIconReplacement(members, wrapper, chain.args.firstOrNull())
+                result
+            }
+        }
+        members.notificationHeaderResolveHeaderViews?.let { method ->
+            hook(method).intercept { chain ->
+                val result = chain.proceed()
+                val wrapper = chain.thisObject ?: return@intercept result
+                applyPanelIconReplacement(members, wrapper)
+                result
+            }
+        }
+        members.oplusGroupInitIcon?.let { method ->
+            hook(method).intercept { chain ->
+                val result = chain.proceed()
+                val wrapper = chain.thisObject ?: return@intercept result
+                applyPanelIconReplacement(members, wrapper)
+                result
+            }
+        }
+        members.oplusGroupResolveHeaderViews?.let { method ->
+            hook(method).intercept { chain ->
+                val result = chain.proceed()
+                val wrapper = chain.thisObject ?: return@intercept result
+                applyPanelIconReplacement(members, wrapper)
+                result
+            }
+        }
+        emitLog(Log.INFO, "SystemUI Hook 已安装：通知面板图标路径")
+    }
+
+    private fun applyPanelIconReplacement(
+        members: SystemUiMembers,
+        wrapper: Any,
+        rowCandidate: Any? = null,
+        iconView: ImageView? = null,
+    ) {
+        if (!systemUiConfig.panelIconReplacementEnabled) return
+        val row = rowCandidate ?: runCatching {
+            members.notificationViewWrapperRowField?.get(wrapper)
+        }.getOrNull() ?: return
+        val icon = iconView ?: runCatching {
+            members.notificationHeaderGetIcon?.invoke(wrapper) as? ImageView
+        }.getOrNull() ?: return
+        ensureSystemUiRefreshReceiver(icon.context, members)
+        val sbn = statusBarNotificationFromRow(members, row) ?: return
+        val renderPlan = iconResolver().resolvePanelIconPlan(
+            context = icon.context,
+            sbn = sbn,
+            originalSmallIcon = originalSmallIconOf(sbn),
+            currentDrawable = icon.drawable,
+        ) ?: return
+        runCatching {
+            icon.applyPanelIconRenderPlan(renderPlan)
+        }.onFailure {
+            warnOnce("systemui.panel.icon.replace", "通知面板规则图标注入失败", it)
+        }
+    }
+
+    private fun ImageView.applyPanelIconRenderPlan(plan: NotificationIconResolver.PanelIconRenderPlan) {
+        val padding = (plan.paddingDp * resources.displayMetrics.density + 0.5f).toInt()
+        clearColorFilter()
+        imageTintList = null
+        background = null
+        clipToOutline = plan.clipToOutline
+        setPadding(padding, padding, padding, padding)
+        setImageDrawable(plan.drawable)
+        setColorFilter(plan.tintColor)
+    }
+
+    private fun statusBarNotificationFromRow(members: SystemUiMembers, row: Any): StatusBarNotification? {
+        val entry = runCatching {
+            members.expandableRowGetEntry?.invoke(row)
+        }.getOrNull() ?: return null
+        return runCatching {
+            members.notificationEntryGetSbn.invoke(entry) as? StatusBarNotification
+        }.getOrNull()
+    }
+
+    private fun iconResolver() = NotificationIconResolver(
+        config = systemUiConfig,
+        rules = systemUiRules,
+    )
+
+    private fun ensureSystemUiRefreshReceiver(context: Context, members: SystemUiMembers) {
+        if (systemUiRefreshReceiverRegistered) return
+        synchronized(this) {
+            if (systemUiRefreshReceiverRegistered) return
+            val appContext = context.applicationContext ?: context
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(receiverContext: Context, intent: Intent) {
+                    if (intent.action != ModuleInfo.ACTION_REFRESH_SYSTEM_UI_CONFIG) return
+                    reloadSystemUiConfig()
+                    refreshSystemUiNotifications(members)
+                }
+            }
+            runCatching {
+                val filter = IntentFilter(ModuleInfo.ACTION_REFRESH_SYSTEM_UI_CONFIG)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                } else {
+                    appContext.registerReceiver(receiver, filter)
+                }
+            }.onSuccess {
+                systemUiRefreshReceiver = receiver
+                systemUiRefreshReceiverRegistered = true
+                infoOnce("systemui.refresh.receiver", "SystemUI Hook 已安装：配置刷新广播接收器")
+            }.onFailure {
+                warnOnce("systemui.refresh.receiver", "注册 SystemUI 配置刷新广播接收器失败", it)
+            }
+        }
+    }
+
+    private fun refreshSystemUiNotifications(members: SystemUiMembers) {
+        val coordinator = notificationRefreshCoordinator ?: return warnOnce(
+            "systemui.refresh.coordinator.missing",
+            "尚未捕获 ViewConfigCoordinator，配置变更将等待通知自身刷新"
+        )
+        val refreshMethod = members.viewConfigCoordinatorRefreshNotifications ?: return
+        runCatching {
+            refreshMethod.invoke(coordinator)
+        }.onFailure {
+            warnOnce("systemui.refresh.invoke", "刷新 SystemUI 通知视图失败", it)
+        }
+    }
+
+    private fun originalSmallIconOf(sbn: StatusBarNotification): Icon? {
         val preservedOriginalIcon = runCatching {
             BundleCompat.getParcelable(sbn.notification.extras, EXTRA_ORIGINAL_SMALL_ICON, Icon::class.java)
         }.getOrNull()
-        val baseStatusBarIcon = preservedOriginalIcon ?: sbn.notification.smallIcon
-        val statusBarOriginalDrawable = runCatching {
-            baseStatusBarIcon?.loadDrawable(context)?.mutate()
-        }.getOrNull() ?: return null
-        val originalIsGrayscale = IconBitmapClassifier.isGrayscaleDrawable(statusBarOriginalDrawable)
-        val currentIsGrayscale = runCatching {
-            currentStatusBarIcon?.loadDrawable(context)?.mutate()?.let(IconBitmapClassifier::isGrayscaleDrawable)
-        }.getOrNull()
-        if (originalIsGrayscale && currentIsGrayscale == false) {
-            infoOnce(
-                "systemui.statusbar.prefer.original:$packageName",
-                "检测到应用已提供原生灰度 smallIcon，但 SystemUI 当前使用彩色图标，已恢复为原始 smallIcon"
-            )
-            return baseStatusBarIcon
-        }
-
-        if (!systemUiConfig.rulesEnabled) return null
-        val rule = systemUiRules[packageName]?.takeIf { it.isEnabled } ?: return null
-        val shouldUseRule = rule.isEnabledAll || !originalIsGrayscale
-        if (!shouldUseRule) return null
-        infoOnce("systemui.statusbar.rule.hit", "SystemUI 命中状态栏规则图标路径")
-        return runCatching { Icon.createWithBitmap(rule.iconBitmap) }.getOrNull()
+        return preservedOriginalIcon ?: sbn.notification.smallIcon
     }
 
     private fun remotePrefsOrNull(): SharedPreferences? = runCatching {

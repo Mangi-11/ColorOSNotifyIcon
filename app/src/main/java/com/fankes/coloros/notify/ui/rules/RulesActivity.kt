@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import com.fankes.coloros.notify.R
 import com.fankes.coloros.notify.framework.LsposedServiceBridge
 import com.fankes.coloros.notify.framework.RemoteRuleMirror
+import com.fankes.coloros.notify.framework.SystemUiRefreshSignal
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
 import com.fankes.coloros.notify.ui.theme.OStatusMiuixTheme
@@ -40,7 +41,6 @@ class RulesActivity : ComponentActivity() {
                     state = uiState,
                     onBack = ::finish,
                     onQueryChange = ::updateQuery,
-                    onRulesEnabledChange = ::setRulesEnabled,
                     onRuleEnabledChange = ::setRuleEnabled,
                     onRuleEnabledAllChange = ::setRuleEnabledAll,
                 )
@@ -59,11 +59,6 @@ class RulesActivity : ComponentActivity() {
 
     private fun updateQuery(query: String) {
         uiState = uiState.copy(query = query)
-    }
-
-    private fun setRulesEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
-        RuleStore.setRulesEnabled(enabled)
-        onConfigChanged(onShowMessage)
     }
 
     private fun setRuleEnabled(rule: IconRule, enabled: Boolean, onShowMessage: (String) -> Unit) {
@@ -87,6 +82,9 @@ class RulesActivity : ComponentActivity() {
         RemoteRuleMirror.syncAsync(service) { result ->
             uiState = uiState.copy(isMirroring = false)
             refreshState()
+            result.onSuccess {
+                SystemUiRefreshSignal.request(this)
+            }
             result.onFailure {
                 onShowMessage(
                     getString(
@@ -102,9 +100,12 @@ class RulesActivity : ComponentActivity() {
         val service = currentService ?: return
         if (!RuleStore.hasPendingRemoteSync) return
         uiState = uiState.copy(isMirroring = true)
-        RemoteRuleMirror.syncAsync(service) {
+        RemoteRuleMirror.syncAsync(service) { result ->
             uiState = uiState.copy(isMirroring = false)
             refreshState()
+            result.onSuccess {
+                SystemUiRefreshSignal.request(this)
+            }
         }
     }
 

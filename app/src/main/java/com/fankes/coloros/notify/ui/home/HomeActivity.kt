@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import com.fankes.coloros.notify.R
 import com.fankes.coloros.notify.framework.LsposedServiceBridge
 import com.fankes.coloros.notify.framework.RemoteRuleMirror
+import com.fankes.coloros.notify.framework.SystemUiRefreshSignal
 import com.fankes.coloros.notify.framework.SystemUiRestarter
 import com.fankes.coloros.notify.rules.RuleRepository
 import com.fankes.coloros.notify.rules.RuleStore
@@ -44,6 +45,10 @@ class HomeActivity : ComponentActivity() {
                     onSyncRules = ::syncRules,
                     onRestartSystemUi = ::performRestartSystemUi,
                     onOpenRules = ::openRules,
+                    onRulesEnabledChange = ::setRulesEnabled,
+                    onPanelIconReplacementEnabledChange = ::setPanelIconReplacementEnabled,
+                    onOplusPushSpecialHandlingEnabledChange = ::setOplusPushSpecialHandlingEnabled,
+                    onPlaceholderIconEnabledChange = ::setPlaceholderIconEnabled,
                 )
             }
         }
@@ -59,7 +64,50 @@ class HomeActivity : ComponentActivity() {
             frameworkConnection = currentService?.toFrameworkConnection(),
             rulesCount = RuleStore.rulesCount,
             rulesUpdatedAt = RuleStore.rulesUpdatedAt,
+            config = RuleStore.moduleConfig,
         )
+    }
+
+    private fun setRulesEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
+        RuleStore.setRulesEnabled(enabled)
+        onConfigChanged(onShowMessage)
+    }
+
+    private fun setPanelIconReplacementEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
+        RuleStore.setPanelIconReplacementEnabled(enabled)
+        onConfigChanged(onShowMessage)
+    }
+
+    private fun setOplusPushSpecialHandlingEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
+        RuleStore.setOplusPushSpecialHandlingEnabled(enabled)
+        onConfigChanged(onShowMessage)
+    }
+
+    private fun setPlaceholderIconEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
+        RuleStore.setPlaceholderIconEnabled(enabled)
+        onConfigChanged(onShowMessage)
+    }
+
+    private fun onConfigChanged(onShowMessage: (String) -> Unit) {
+        refreshLocalState()
+        val service = currentService
+        if (service == null) {
+            onShowMessage(getString(R.string.message_config_saved_local_pending))
+            return
+        }
+        uiState = uiState.copy(isConfigMirroring = true)
+        mirrorToRemoteStore(service) { result ->
+            uiState = uiState.copy(isConfigMirroring = false)
+            refreshLocalState()
+            result.onFailure {
+                onShowMessage(
+                    getString(
+                        R.string.message_config_mirror_failed,
+                        it.message ?: it.javaClass.simpleName,
+                    )
+                )
+            }
+        }
     }
 
     private fun syncRules(onShowMessage: (String) -> Unit) {
@@ -115,15 +163,25 @@ class HomeActivity : ComponentActivity() {
     private fun mirrorPendingRemoteStoreIfNeeded() {
         val service = currentService ?: return
         if (!RuleStore.hasPendingRemoteSync) return
-        mirrorToRemoteStore(service)
+        uiState = uiState.copy(isConfigMirroring = true)
+        mirrorToRemoteStore(service) {
+            uiState = uiState.copy(isConfigMirroring = false)
+            refreshLocalState()
+        }
     }
 
     private fun mirrorToRemoteStore(
         service: XposedService,
+        requestRefresh: Boolean = true,
         onResult: ((Result<RemoteRuleMirror.SyncResult>) -> Unit)? = null,
     ) {
         RemoteRuleMirror.syncAsync(service) { result ->
             refreshLocalState()
+            if (requestRefresh) {
+                result.onSuccess {
+                    SystemUiRefreshSignal.request(this)
+                }
+            }
             onResult?.invoke(result)
         }
     }
@@ -138,7 +196,7 @@ class HomeActivity : ComponentActivity() {
             restartSystemUiDirectly(onShowMessage)
             return
         }
-        mirrorToRemoteStore(service) { mirrorResult ->
+        mirrorToRemoteStore(service, requestRefresh = false) { mirrorResult ->
             mirrorResult.onSuccess {
                 restartSystemUiDirectly(onShowMessage)
             }.onFailure {

@@ -62,7 +62,6 @@ fun RuleListScreen(
     state: RuleListState,
     onBack: () -> Unit,
     onQueryChange: (String) -> Unit,
-    onRulesEnabledChange: (Boolean, (String) -> Unit) -> Unit,
     onRuleEnabledChange: (IconRule, Boolean, (String) -> Unit) -> Unit,
     onRuleEnabledAllChange: (IconRule, Boolean, (String) -> Unit) -> Unit,
 ) {
@@ -127,10 +126,7 @@ fun RuleListScreen(
                 ) {}
             }
             item {
-                RuleSummaryCard(
-                    state = state,
-                    onRulesEnabledChange = { onRulesEnabledChange(it, ::showSnackbar) },
-                )
+                RuleSummaryCard(state = state)
             }
             item { SmallTitle(text = stringResource(R.string.section_rule_management)) }
             if (rules.isEmpty()) {
@@ -156,7 +152,6 @@ fun RuleListScreen(
 @Composable
 private fun RuleSummaryCard(
     state: RuleListState,
-    onRulesEnabledChange: (Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -172,19 +167,6 @@ private fun RuleSummaryCard(
                 state.enabledRulesCount,
                 state.forceAllRulesCount,
             ),
-        )
-        ToggleComponent(
-            title = stringResource(R.string.label_rules_enabled),
-            summary = if (state.isMirroring) {
-                stringResource(R.string.label_config_mirroring)
-            } else if (state.isFrameworkConnected) {
-                stringResource(R.string.label_rules_enabled_summary)
-            } else {
-                stringResource(R.string.label_framework_waiting_summary)
-            },
-            checked = state.config.rulesEnabled,
-            enabled = !state.isMirroring,
-            onCheckedChange = onRulesEnabledChange,
         )
     }
 }
@@ -329,7 +311,6 @@ private fun RuleListScreenPreview() {
             state = RuleListState(),
             onBack = {},
             onQueryChange = {},
-            onRulesEnabledChange = { _, _ -> },
             onRuleEnabledChange = { _, _, _ -> },
             onRuleEnabledAllChange = { _, _, _ -> },
         )

@@ -9,6 +9,9 @@ object RuleStore {
     data class ModuleConfig(
         val moduleEnabled: Boolean = true,
         val rulesEnabled: Boolean = true,
+        val panelIconReplacementEnabled: Boolean = true,
+        val oplusPushSpecialHandlingEnabled: Boolean = true,
+        val placeholderIconEnabled: Boolean = false,
     )
 
     const val GROUP_CONFIG = "config"
@@ -31,6 +34,9 @@ object RuleStore {
     const val KEY_CONFIG_UPDATED_AT = "config_updated_at"
     const val KEY_MODULE_ENABLED = "config.module_enabled"
     const val KEY_RULES_ENABLED = "config.rules_enabled"
+    const val KEY_PANEL_ICON_REPLACEMENT_ENABLED = "config.panel_icon_replacement_enabled"
+    const val KEY_OPLUS_PUSH_SPECIAL_HANDLING_ENABLED = "config.oplus_push_special_handling_enabled"
+    const val KEY_PLACEHOLDER_ICON_ENABLED = "config.placeholder_icon_enabled"
     private const val KEY_LAST_REMOTE_MIRRORED_AT = "last_remote_mirrored_at"
     private const val KEY_RULE_ENABLED_PREFIX = "rule.enabled."
     private const val KEY_RULE_ENABLED_ALL_PREFIX = "rule.enabled_all."
@@ -95,6 +101,27 @@ object RuleStore {
             .apply()
     }
 
+    fun setPanelIconReplacementEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_PANEL_ICON_REPLACEMENT_ENABLED, enabled)
+            .markConfigChanged()
+            .apply()
+    }
+
+    fun setOplusPushSpecialHandlingEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_OPLUS_PUSH_SPECIAL_HANDLING_ENABLED, enabled)
+            .markConfigChanged()
+            .apply()
+    }
+
+    fun setPlaceholderIconEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_PLACEHOLDER_ICON_ENABLED, enabled)
+            .markConfigChanged()
+            .apply()
+    }
+
     fun setRuleEnabled(packageName: String, enabled: Boolean) {
         prefs.edit()
             .putBoolean(ruleEnabledKey(packageName), enabled)
@@ -131,6 +158,9 @@ object RuleStore {
         return ModuleConfig(
             moduleEnabled = source.getBoolean(KEY_MODULE_ENABLED, true),
             rulesEnabled = source.getBoolean(KEY_RULES_ENABLED, true),
+            panelIconReplacementEnabled = source.getBoolean(KEY_PANEL_ICON_REPLACEMENT_ENABLED, true),
+            oplusPushSpecialHandlingEnabled = source.getBoolean(KEY_OPLUS_PUSH_SPECIAL_HANDLING_ENABLED, true),
+            placeholderIconEnabled = source.getBoolean(KEY_PLACEHOLDER_ICON_ENABLED, false),
         )
     }
 
@@ -188,6 +218,9 @@ object RuleStore {
     private fun isMirroredConfigKey(key: String) =
         key == KEY_MODULE_ENABLED ||
             key == KEY_RULES_ENABLED ||
+            key == KEY_PANEL_ICON_REPLACEMENT_ENABLED ||
+            key == KEY_OPLUS_PUSH_SPECIAL_HANDLING_ENABLED ||
+            key == KEY_PLACEHOLDER_ICON_ENABLED ||
             key.startsWith(KEY_RULE_ENABLED_PREFIX) ||
             key.startsWith(KEY_RULE_ENABLED_ALL_PREFIX)
 
