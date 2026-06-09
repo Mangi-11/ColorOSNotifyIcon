@@ -1,92 +1,90 @@
-# ColorOSNotifyIcon - ColorOS 通知图标增强
+# ColorOS 通知图标增强
 
-<img src="img-src/icon.png" width = "100" height = "100" alt="LOGO"/>
+基于 [fankes/ColorOSNotifyIcon](https://github.com/fankes/ColorOSNotifyIcon) 大幅重构的个人维护分支，使用 [libxposed API 101](https://github.com/libxposed/api) 重写 Hook 层，UI 迁移至 [Miuix](https://github.com/compose-miuix-ui/miuix)，专注于 ColorOS 16 通知图标优化与原生图标规范适配。
 
-基于 [ColorOS 通知图标增强](https://github.com/fankes/ColorOSNotifyIcon) 的精简重构版本，专注状态栏与通知中心图标优化。
+## 功能
 
-为 ColorOS 优化通知图标并适配原生通知图标规范。
+- 状态栏通知图标替换
+- 通知中心小图标替换（可关）
+- Oplus Push 系统推送特判（可关）
+- 未适配应用的单色占位符（可关）
+- 本地规则管理，支持按应用启用或全部替换
+- 手动同步远程规则，不做后台自动同步
+- 配置写入 Xposed 框架侧，通知 SystemUI 刷新
 
-## For Non-Chinese Users
+## 开关说明
 
-This project will not be adapted i18n, please stay tuned for my new projects in the future.
+| 开关 | 说明 |
+| --- | --- |
+| 启用规则替换 | 总开关。关闭后不再使用规则图标和占位符，只保留原始灰度 `smallIcon` 保护 |
+| 通知中心图标替换 | 控制通知面板内的小图标。关闭后通知中心保持 ColorOS 默认行为，不影响状态栏 |
+| 系统推送特判 | Oplus Push 通知是否按目标应用匹配规则。关闭后保持系统默认 |
+| 未适配占位符 | 未命中规则且原始图标不是灰度的，使用单色占位符替代 |
 
-## 模块截图
+单条规则里的两个选项：
 
-<img src="img-src/preview.jpg" width="300" alt="模块截图"/>
+- **启用替换**：允许该应用使用规则图标
+- **全部替换**：忽略应用自带的单色图标，始终使用规则图标
 
-## 关于原项目
+## 图标决策逻辑
 
-> **重构起因：** 原项目最新的提交代码存在问题，会导致系统日志持续输出并引发严重的耗电现象。目前原作者 **并未停止维护**，只是工作繁忙暂时抽不出空来修复，后续计划推出整合模块。
->
-> 在此背景下，本分支基于 [fankes/ColorOSNotifyIcon](https://github.com/fankes/ColorOSNotifyIcon) 进行了修复，在解决严重耗电痛点并保留原始开源协议、版权信息与致谢名单的前提下，进行了大幅的精简与重构。
+状态栏和通知中心用同一套逻辑，不会无条件覆盖系统结果：
 
-## 重构内容
+1. Oplus Push 通知 + 系统推送特判已关闭 → 保持系统默认
+2. 命中已启用规则 + 全部替换已开启 → 使用规则图标
+3. 命中已启用规则 + 原始 `smallIcon` 不是灰度图标 → 使用规则图标
+4. 未命中规则 + 未适配占位符已开启 + 原始 `smallIcon` 不是灰度图标 → 使用占位符
+5. 原始 `smallIcon` 是灰度图标，但系统当前结果为彩色 → 恢复原始 `smallIcon`
+6. 以上均不满足 → 保持 ColorOS 当前结果
 
-相较于原版，ColorOSNotifyIcon 主要做了以下调整：
+通知中心额外跳过媒体通知，不破坏系统媒体样式。
 
-- **迁移至 libxposed API 101**，移除 legacy Xposed / rovo89 API / YukiHookAPI 等历史兼容层
-- **收敛为通知图标优化模块**，统一处理状态栏与通知中心图标替换策略
-- **不再统一归一化在线规则图标**，恢复按在线规则原始图输出，避免部分图标在状态栏被额外放大
-- 作用域固定为：`system`、`com.android.systemui`
-- 不再提供旧版 ColorOS / Android 分支兼容逻辑
-- App 仅保留 **规则同步** 与 **重启 SystemUI** 两个入口；模块启停统一交由 **LSPosed 管理器**
-- 所有规则修改后统一通过 **重启 SystemUI** 生效，不做热更新（**第一次安装请同步规则，然后重启手机**）
+## 安装
 
-### 当前维护目标
+1. 从 [GitHub Releases](https://github.com/wowohut/ColorOSNotifyIcon/releases/latest) 下载 APK
+2. 在 LSPosed 中启用模块
+3. 勾选作用域：系统框架 `system`、系统界面 `com.android.systemui`
+4. 打开 App，同步规则
+5. 按需调整开关和单个应用的规则
+6. 点击 **重启 SystemUI** 使配置生效
 
-- **仅支持 ColorOS 16 / Android 16（API 36）**
-- **仅支持 modern libxposed API 101 / LSPosed**
-- 以**低耗电、少日志、少热路径反射**为优先目标
+首次安装或更新了涉及 `system_server` Hook 的版本，建议完整重启一次系统。
 
-### 图标逻辑
+## 适配说明
 
-- **状态栏图标**：由模块接管，但不是简单地“原始图标 / 在线规则 / ColorOS 原版”三选一，而是按条件决定是否替换
-- **通知中心图标**：按同一套图标决策器处理，同时保留原生灰度小图标保护，避免把已经符合规范的图标强行替换
-- **原始灰度 `smallIcon` 优先恢复**：如果应用自己提供的原始 `smallIcon` 已经是灰度/单色图标，但 ColorOS 当前结果却变成了彩色图标，模块会优先恢复原始 `smallIcon`
-- **在线规则图标按条件覆盖**：如果命中在线规则且规则已启用，并且满足 `isEnabledAll = true` **或** 应用原始 `smallIcon` 不是灰度图标，则使用在线规则图标
-- **其余情况保留 ColorOS 当前结果**：如果既不需要恢复原始灰度 `smallIcon`，也没有命中可用的在线规则，模块不会继续强行改写，直接保留 ColorOS / SystemUI 当前计算出的状态栏图标
+仅适配 ColorOS 16 / realme UI 7.0 + LSPosed，不兼容旧版系统、旧版 Xposed 或其他框架。
 
-## 使用说明
-
-1. 在 LSPosed 中启用模块
-2. 勾选作用域：`system`、`com.android.systemui`
-3. 打开 App 同步规则
-4. 点击"重启 SystemUI"使设置生效
-
-> 若本次更新包含 `system_server` 逻辑调整，首次更新后建议完整重启一次系统，以确保新 Hook 全部生效。
+只服务最新系统版本，去掉历史兼容包袱，保持干净优雅。
 
 ## 规则来源
 
-本模块继续使用 `AndroidNotifyIconAdapt` 规则仓库：
+沿用 `AndroidNotifyIconAdapt` 规则仓库：
 
 - [Android 通知图标规范适配计划](https://github.com/fankes/AndroidNotifyIconAdapt)
 - [ColorOS 规则](https://raw.githubusercontent.com/fankes/AndroidNotifyIconAdapt/main/OS/ColorOS/NotifyIconsSupportConfig.json)
 - [APP 规则](https://raw.githubusercontent.com/fankes/AndroidNotifyIconAdapt/main/APP/NotifyIconsSupportConfig.json)
 
-规则同步时会先合并 **ColorOS 规则**，再合并 **APP 规则**；若同一包名在两份规则中重复出现，则以后合并的 **APP 规则** 为准。
+同步时先合并 ColorOS 规则，再合并 APP 规则。同一包名出现两次的，以 APP 规则为准。
 
-## 历史背景
+## 与原版的区别
 
-ColorOS 虽然支持原生通知图标规范，但系统与第三方推送长期存在彩色图标、风格不统一、系统强制替换小图标等问题，影响状态栏一致性与可读性。
+Fork 自 [fankes/ColorOSNotifyIcon](https://github.com/fankes/ColorOSNotifyIcon)，保留原始协议、版权声明和贡献者致谢。
 
-本重构版本选择收敛目标：只处理**通知图标优化**，尽量减少对 SystemUI 热路径的侵入，以换取更稳定的行为和更低的额外功耗。
+主要改动：
 
-## 贡献通知图标优化名单
+- 用 [modern libxposed API 101](https://github.com/libxposed/api) 重写了 Hook 入口
+- 移除了旧框架兼容层
+- 用 [Miuix](https://github.com/compose-miuix-ui/miuix) 重写了 App UI
+- 功能收敛到通知图标增强，去除其余杂项功能
+- 不做后台自动同步
 
-此项目是 `AndroidNotifyIconAdapt` 项目的一部分，详情请参考下方。
-
-- [Android 通知图标规范适配计划](https://github.com/fankes/AndroidNotifyIconAdapt)
+原版项目以原作者维护计划为准。
 
 ## 注意事项
 
-1. 本软件免费、由兴趣驱动开发，仅供学习交流使用。如果你是从其他非官方渠道付费获得本软件，可能已遭遇欺诈，欢迎向我们举报可疑行为。
-2. 本软件采用 **GNU Affero General Public License (AGPL 3.0)** 许可证。根据该许可证的要求：
-
-   - 任何衍生作品必须采用相同的 AGPL 许可证
-   - 分发本软件或其修改版本时，必须提供完整的源代码
-   - 必须保留原始的版权声明及许可证信息
-   - 不得额外施加限制来限制他人对本软件的自由使用
-3. 我们鼓励在遵守 AGPL 3.0 条款的前提下进行自由传播和改进，但请尊重作者署名权，勿冒用原作者名义。
+1. 本软件免费、兴趣驱动，仅供学习交流。如果你是付费获得的，说明被骗了。
+2. 本软件采用 **AGPL 3.0** 许可证。分发或修改时必须遵守条款并提供源代码。
+3. 请保留原始版权声明和许可证信息，不要冒用原作者名义。
 
 ## 隐私政策
 
@@ -96,23 +94,8 @@ ColorOS 虽然支持原生通知图标规范，但系统与第三方推送长期
 
 - [AGPL-3.0](https://www.gnu.org/licenses/agpl-3.0.html)
 
-```
-Copyright (C) 20174 Fankes Studio(qzmmcn@163.com)
+原始项目版权归 Fankes Studio(qzmmcn@163.com) 所有。本分支改动同样按 AGPL-3.0 发布。
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
+## 致谢
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
-
-Powered by [modern libxposed API](https://github.com/libxposed/api)
-
-版权所有 © 20174 Fankes Studio(qzmmcn@163.com)
+感谢原作者 [fankes](https://github.com/fankes) 的开源基础，以及各位图标规则维护者的持续付出，得以告别丑陋的默认图标，带来愉悦。
