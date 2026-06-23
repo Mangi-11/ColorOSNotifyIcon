@@ -12,15 +12,15 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Rect
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Icon
-import android.graphics.drawable.BitmapDrawable
-import android.os.Build
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import androidx.core.content.ContextCompat
 import androidx.core.os.BundleCompat
 import com.fankes.coloros.notify.core.ModuleInfo
 import com.fankes.coloros.notify.core.SystemPackages
@@ -44,8 +44,6 @@ class ModuleMain : XposedModule() {
         private const val COMPACT_PANEL_ICON_CANVAS_DP = 32f
         private const val COMPACT_PANEL_ICON_CONTENT_DP = 21f
         private const val COMPACT_PANEL_ICON_CONTAINER_MAX_DP = 72f
-        private const val DIAG_SMALL_VIEW_MAX_DP = 96f
-        private const val DIAG_MAX_LINES = 80
         private const val OPLUS_GROUP_ICON_ID_NAME = "icon"
         private val OPLUS_GROUP_ICON_VIEW_NAMES = arrayOf(
             "icon_container",
@@ -56,7 +54,6 @@ class ModuleMain : XposedModule() {
     }
 
     private val onceLogs = ConcurrentHashMap.newKeySet<String>()
-    private val diagnosticLogs = ConcurrentHashMap.newKeySet<String>()
     private var systemServerInstalled = false
     private var systemUiInstalled = false
     private var systemUiConfig = RuleStore.ModuleConfig()
@@ -267,7 +264,7 @@ class ModuleMain : XposedModule() {
             hook(method).intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
-                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true, diagnosticTag = "oplus.initIcon")
+                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true)
                 result
             }
         }
@@ -275,7 +272,7 @@ class ModuleMain : XposedModule() {
             hook(method).intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
-                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true, diagnosticTag = "oplus.resolveHeaderViews")
+                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true)
                 result
             }
         }
@@ -286,7 +283,7 @@ class ModuleMain : XposedModule() {
                 val wrapper = runCatching {
                     members.oplusGroupIconLoadedCallbackWrapperField?.get(callback)
                 }.getOrNull() ?: return@intercept result
-                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true, diagnosticTag = "oplus.iconLoaded")
+                applyPanelIconReplacement(members, wrapper, compactOplusGroupIcon = true)
                 result
             }
         }
@@ -299,35 +296,19 @@ class ModuleMain : XposedModule() {
         rowCandidate: Any? = null,
         iconView: ImageView? = null,
         compactOplusGroupIcon: Boolean = false,
-        diagnosticTag: String? = null,
     ) {
         if (!systemUiConfig.panelIconReplacementEnabled) return
         val row = rowCandidate ?: runCatching {
             members.notificationViewWrapperRowField?.get(wrapper)
-        }.getOrNull()
-        if (row == null) {
-            diagnosticTag?.let { logOplusGroupHookDiagnostic(it, wrapper, null, null, null, "row=null") }
-            return
-        }
-        val useCompactMask = compactOplusGroupIcon
+        }.getOrNull() ?: return
         val icon = resolvePanelIconView(
             members = members,
             wrapper = wrapper,
             row = row,
             explicitIcon = iconView,
-            preferGroupIcon = useCompactMask,
+            preferGroupIcon = compactOplusGroupIcon,
         )
-        diagnosticTag?.let {
-            logOplusGroupHookDiagnostic(
-                tag = it,
-                wrapper = wrapper,
-                row = row,
-                icon = icon,
-                sbn = statusBarNotificationFromRow(members, row),
-                reason = "after-resolve compactOplusGroupIcon=$compactOplusGroupIcon useCompactMask=$useCompactMask",
-            )
-        }
-        if (icon == null) return
+            ?: return
         ensureSystemUiRefreshReceiver(icon.context, members)
         val sbn = statusBarNotificationFromRow(members, row) ?: return
         val renderPlan = iconResolver().resolvePanelIconPlan(
@@ -336,12 +317,11 @@ class ModuleMain : XposedModule() {
             originalSmallIcon = originalSmallIconOf(sbn),
             currentDrawable = icon.drawable,
         ) ?: return
-        val actualPlan = if (useCompactMask) renderPlan.toCompactMaskPlan(icon) else renderPlan
+        val actualPlan = if (compactOplusGroupIcon) renderPlan.toCompactMaskPlan(icon) else renderPlan
         runCatching {
-            if (useCompactMask) logTwoChildGroupDiagnostic(row, wrapper, icon, sbn, "before")
-            if (useCompactMask) row.clearOplusGroupIconLayers(icon)
+            if (compactOplusGroupIcon) row.clearOplusGroupIconLayers(icon)
             icon.applyPanelIconRenderPlan(actualPlan)
-            if (useCompactMask) icon.reapplyCompactPlanAfterOplusDecoration(row, wrapper, actualPlan, sbn)
+            if (compactOplusGroupIcon) icon.reapplyCompactPlanAfterOplusDecoration(row, actualPlan)
         }.onFailure {
             warnOnce("systemui.panel.icon.replace", "通知面板规则图标注入失败", it)
         }
@@ -365,15 +345,13 @@ class ModuleMain : XposedModule() {
 
     private fun ImageView.reapplyCompactPlanAfterOplusDecoration(
         row: Any,
-        wrapper: Any,
         plan: NotificationIconResolver.PanelIconRenderPlan,
-        sbn: StatusBarNotification,
     ) {
         val reapply = Runnable {
             row.clearOplusGroupIconLayers(this)
             applyPanelIconRenderPlan(plan)
-            logTwoChildGroupDiagnostic(row, wrapper, this, sbn, "posted")
         }
+        // Oplus may update group icon roundness/background again from the async icon-loading callback.
         post(reapply)
         postDelayed(reapply, 80L)
         postDelayed(reapply, 240L)
@@ -422,6 +400,7 @@ class ModuleMain : XposedModule() {
         return root.findViewByEntryName(OPLUS_GROUP_ICON_ID_NAME) as? ImageView
     }
 
+    @Suppress("DiscouragedApi")
     private fun View.findViewByEntryName(entryName: String): View? {
         val viewId = context.resources.getIdentifier(entryName, "id", SystemPackages.SYSTEM_UI)
         if (viewId == 0) return null
@@ -444,91 +423,6 @@ class ModuleMain : XposedModule() {
         clipToOutline = false
         outlineProvider = null
     }
-
-    private fun logTwoChildGroupDiagnostic(
-        row: Any,
-        wrapper: Any,
-        icon: ImageView,
-        sbn: StatusBarNotification,
-        phase: String,
-    ) {
-        val key = "diag:${sbn.packageName}:$phase"
-        if (!diagnosticLogs.add(key)) return
-        val rowView = row as? View ?: return
-        val childCount = row.groupChildCount()
-        emitLog(
-            Log.INFO,
-            "CNI_DIAG phase=$phase pkg=${sbn.packageName} childCount=$childCount wrapper=${wrapper.javaClass.name} row=${row.javaClass.name} icon=${icon.describeView()} iconDrawable=${icon.drawable.describeDrawable()} iconBg=${icon.background.describeDrawable()} iconFg=${icon.foreground.describeDrawable()}"
-        )
-        rowView.logSmallViewTree(prefix = "CNI_DIAG rowTree", anchor = icon)
-    }
-
-    private fun logOplusGroupHookDiagnostic(
-        tag: String,
-        wrapper: Any,
-        row: Any?,
-        icon: ImageView?,
-        sbn: StatusBarNotification?,
-        reason: String,
-    ) {
-        val packageName = sbn?.packageName ?: "unknown"
-        val key = "hookdiag:$tag:$packageName:$reason"
-        if (!diagnosticLogs.add(key)) return
-        emitLog(
-            Log.INFO,
-            "CNI_DIAG hook=$tag reason=$reason pkg=$packageName wrapper=${wrapper.javaClass.name} row=${row?.javaClass?.name} childCount=${row?.groupChildCount()} isTwo=${row?.isTwoChildGroupSummary()} icon=${icon?.describeView()} iconBg=${icon?.background.describeDrawable()} iconDrawable=${icon?.drawable.describeDrawable()}"
-        )
-        val rowView = row as? View ?: return
-        val anchor = icon ?: rowView.findOplusGroupIconView()
-        if (anchor != null) rowView.logSmallViewTree(prefix = "CNI_DIAG hookTree $tag", anchor = anchor)
-    }
-
-    private fun View.logSmallViewTree(
-        prefix: String,
-        anchor: ImageView,
-        depth: Int = 0,
-        counter: IntArray = intArrayOf(0),
-    ) {
-        if (counter[0] >= DIAG_MAX_LINES) return
-        if (isDiagnosticSmallView(anchor)) {
-            counter[0]++
-            emitLog(
-                Log.INFO,
-                "$prefix depth=$depth ${describeView()} bg=${background.describeDrawable()} fg=${foreground.describeDrawable()} image=${(this as? ImageView)?.drawable.describeDrawable()}"
-            )
-        }
-        if (this !is ViewGroup) return
-        for (index in 0 until childCount) {
-            getChildAt(index)?.logSmallViewTree(prefix, anchor, depth + 1, counter)
-            if (counter[0] >= DIAG_MAX_LINES) return
-        }
-    }
-
-    private fun View.isDiagnosticSmallView(anchor: ImageView): Boolean {
-        if (this === anchor) return true
-        val maxSize = (DIAG_SMALL_VIEW_MAX_DP * resources.displayMetrics.density + 0.5f).toInt()
-        val width = measuredWidth.takeIf { it > 0 } ?: width.takeIf { it > 0 } ?: layoutParams?.width ?: 0
-        val height = measuredHeight.takeIf { it > 0 } ?: height.takeIf { it > 0 } ?: layoutParams?.height ?: 0
-        if (width == ViewGroup.LayoutParams.MATCH_PARENT || height == ViewGroup.LayoutParams.MATCH_PARENT) return false
-        if (width in 1..maxSize && height in 1..maxSize) return true
-        return background != null || foreground != null || this is ImageView
-    }
-
-    private fun View.describeView(): String {
-        val idName = id.resourceEntryNameOrNull(this)
-        val lp = layoutParams
-        return "${javaClass.name}{id=$idName idHex=0x${id.toString(16)} pos=$left,$top-$right,$bottom measured=${measuredWidth}x$measuredHeight lp=${lp?.width}x${lp?.height} alpha=$alpha vis=$visibility}"
-    }
-
-    private fun Drawable?.describeDrawable(): String =
-        this?.let { "${it.javaClass.name}{bounds=${it.bounds} alpha=${it.alpha}}" } ?: "null"
-
-    private fun Int.resourceEntryNameOrNull(view: View): String =
-        if (this == View.NO_ID) {
-            "NO_ID"
-        } else {
-            runCatching { view.resources.getResourceEntryName(this) }.getOrDefault("unknown")
-        }
 
     private fun NotificationIconResolver.PanelIconRenderPlan.toCompactMaskPlan(
         icon: ImageView,
@@ -568,26 +462,6 @@ class ModuleMain : XposedModule() {
         return bitmap
     }
 
-    private fun Any.isTwoChildGroupSummary(): Boolean {
-        val childCount = groupChildCount() ?: return false
-        val isSummaryWithChildren = runCatching {
-            Reflection.findMethod(javaClass, "isSummaryWithChildren")?.invoke(this) as? Boolean
-        }.getOrNull()
-        return childCount == 2 && isSummaryWithChildren != false
-    }
-
-    private fun Any.groupChildCount(): Int? {
-        val childrenFromMethod = runCatching {
-            Reflection.findMethod(javaClass, "getAttachedChildren")?.invoke(this) as? Collection<*>
-        }.getOrNull() ?: runCatching {
-            Reflection.findMethod(javaClass, "getNotificationChildren")?.invoke(this) as? Collection<*>
-        }.getOrNull()
-        if (childrenFromMethod != null) return childrenFromMethod.size
-        return runCatching {
-            (Reflection.findField(javaClass, "mAttachedChildren")?.get(this) as? Collection<*>)?.size
-        }.getOrNull()
-    }
-
     private fun statusBarNotificationFromRow(members: SystemUiMembers, row: Any): StatusBarNotification? {
         val entry = runCatching {
             members.expandableRowGetEntry?.invoke(row)
@@ -616,11 +490,7 @@ class ModuleMain : XposedModule() {
             }
             runCatching {
                 val filter = IntentFilter(ModuleInfo.ACTION_REFRESH_SYSTEM_UI_CONFIG)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    appContext.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-                } else {
-                    appContext.registerReceiver(receiver, filter)
-                }
+                ContextCompat.registerReceiver(appContext, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
             }.onSuccess {
                 systemUiRefreshReceiver = receiver
                 systemUiRefreshReceiverRegistered = true

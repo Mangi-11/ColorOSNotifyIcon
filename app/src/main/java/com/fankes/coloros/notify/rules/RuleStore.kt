@@ -104,6 +104,7 @@ object RuleStore {
         )
     }
 
+    @Suppress("ApplySharedPref")
     fun mirrorTo(remotePrefs: SharedPreferences, snapshot: MirrorSnapshot): Boolean = remotePrefs.edit().apply {
         OBSOLETE_KEYS.forEach(::remove)
         putInt(KEY_RULES_COUNT, snapshot.rulesCount)
@@ -191,6 +192,7 @@ object RuleStore {
         }
     }
 
+    @Suppress("ApplySharedPref")
     private fun cleanupObsoleteKeys() {
         if (OBSOLETE_KEYS.none(prefs::contains)) return
         prefs.edit().apply {

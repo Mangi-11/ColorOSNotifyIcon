@@ -541,6 +541,7 @@ private fun softwareVersionText(): String {
     return softwareVersion
 }
 
+@Suppress("PrivateApi")
 private fun systemProperty(name: String): String =
     Class.forName("android.os.SystemProperties")
         .getMethod("get", String::class.java)

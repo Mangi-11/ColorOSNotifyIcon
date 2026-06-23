@@ -11,8 +11,8 @@
     <string name="label_rules_snapshot_synced">%1$d 条 · 最后同步 %2$s</string>
     <string name="label_rules_snapshot_never">%1$d 条 · 从未同步</string>
     <string name="button_sync_rules">同步规则</string>
-    <string name="button_syncing_rules">同步中...</string>
-    <string name="button_mirroring_rules">镜像中...</string>
+    <string name="button_syncing_rules">同步中…</string>
+    <string name="button_mirroring_rules">镜像中…</string>
     <string name="label_sync_summary">从远程更新规则数据</string>
     <string name="rules_title">通知图标优化名单</string>
     <string name="rules_search_hint">搜索应用或包名</string>
