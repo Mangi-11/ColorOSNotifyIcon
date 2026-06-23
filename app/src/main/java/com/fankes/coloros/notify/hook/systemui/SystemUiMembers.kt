@@ -23,6 +23,8 @@ internal data class SystemUiMembers(
     val expandableRowGetEntry: Method?,
     val oplusGroupInitIcon: Method?,
     val oplusGroupResolveHeaderViews: Method?,
+    val oplusGroupIconLoadedCallbackInvoke: Method?,
+    val oplusGroupIconLoadedCallbackWrapperField: Field?,
     val viewConfigCoordinatorConstructors: List<Constructor<*>>,
     val viewConfigCoordinatorAttach: Method?,
     val viewConfigCoordinatorRefreshNotifications: Method?,
@@ -65,6 +67,8 @@ internal data class SystemUiMembers(
                 loadOptional("com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper")
             val oplusGroupTemplateWrapperClass =
                 loadOptional("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupTemplateWrapper")
+            val oplusGroupIconLoadedCallbackClass =
+                loadOptional("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupTemplateWrapper\$initIcon\$1\$1\$1")
             val viewConfigCoordinatorClass =
                 loadOptional("com.android.systemui.statusbar.notification.collection.coordinator.ViewConfigCoordinator")
             val notifPipelineClass =
@@ -119,6 +123,10 @@ internal data class SystemUiMembers(
                 ?.let { Reflection.findMethod(it, "initIcon") }
             val oplusGroupResolveHeaderViews = oplusGroupTemplateWrapperClass
                 ?.let { Reflection.findMethod(it, "resolveHeaderViews") }
+            val oplusGroupIconLoadedCallbackInvoke = oplusGroupIconLoadedCallbackClass
+                ?.let { Reflection.findMethod(it, "invoke", Any::class.java) }
+            val oplusGroupIconLoadedCallbackWrapperField = oplusGroupIconLoadedCallbackClass
+                ?.let { Reflection.findField(it, "this\$0") }
             val viewConfigCoordinatorAttach = viewConfigCoordinatorClass
                 ?.takeIf { notifPipelineClass != null }
                 ?.let { Reflection.findMethod(it, "attach", notifPipelineClass!!) }
@@ -146,6 +154,8 @@ internal data class SystemUiMembers(
                 expandableRowGetEntry = expandableRowGetEntry,
                 oplusGroupInitIcon = oplusGroupInitIcon,
                 oplusGroupResolveHeaderViews = oplusGroupResolveHeaderViews,
+                oplusGroupIconLoadedCallbackInvoke = oplusGroupIconLoadedCallbackInvoke,
+                oplusGroupIconLoadedCallbackWrapperField = oplusGroupIconLoadedCallbackWrapperField,
                 viewConfigCoordinatorConstructors = viewConfigCoordinatorConstructors,
                 viewConfigCoordinatorAttach = viewConfigCoordinatorAttach,
                 viewConfigCoordinatorRefreshNotifications = viewConfigCoordinatorRefreshNotifications,

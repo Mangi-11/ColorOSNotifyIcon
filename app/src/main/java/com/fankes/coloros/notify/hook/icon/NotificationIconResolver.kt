@@ -17,7 +17,7 @@ internal class NotificationIconResolver(
 
     data class PanelIconRenderPlan(
         val drawable: Drawable,
-        val tintColor: Int,
+        val tintColor: Int?,
         val paddingDp: Float,
         val clipToOutline: Boolean,
         val source: PanelIconSource,
