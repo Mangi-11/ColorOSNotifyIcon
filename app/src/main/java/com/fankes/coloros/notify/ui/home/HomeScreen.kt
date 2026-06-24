@@ -34,7 +34,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -47,9 +46,9 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
-import top.yukonga.miuix.kmp.basic.RadioButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
@@ -64,6 +63,7 @@ import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.text.SimpleDateFormat
@@ -115,6 +115,7 @@ fun HomeScreen(
             item {
                 SettingsCard(
                     state = state,
+                    onIconSourceModeChange = { onIconSourceModeChange(it, ::showSnackbar) },
                     onRulesEnabledChange = { onRulesEnabledChange(it, ::showSnackbar) },
                     onPanelIconReplacementEnabledChange = {
                         onPanelIconReplacementEnabledChange(it, ::showSnackbar)
@@ -125,13 +126,6 @@ fun HomeScreen(
                     onPlaceholderIconEnabledChange = {
                         onPlaceholderIconEnabledChange(it, ::showSnackbar)
                     },
-                )
-            }
-            item { SmallTitle(text = stringResource(R.string.label_icon_source_mode)) }
-            item {
-                IconSourceCard(
-                    state = state,
-                    onIconSourceModeChange = { onIconSourceModeChange(it, ::showSnackbar) },
                 )
             }
             item { SmallTitle(text = stringResource(R.string.section_rules_data)) }
@@ -160,6 +154,7 @@ fun HomeScreen(
 @Composable
 private fun SettingsCard(
     state: HomeScreenState,
+    onIconSourceModeChange: (RuleStore.IconSourceMode) -> Unit,
     onRulesEnabledChange: (Boolean) -> Unit,
     onPanelIconReplacementEnabledChange: (Boolean) -> Unit,
     onOplusPushSpecialHandlingEnabledChange: (Boolean) -> Unit,
@@ -173,6 +168,7 @@ private fun SettingsCard(
             .padding(horizontal = 12.dp)
             .padding(bottom = 12.dp),
     ) {
+        IconSourceRow(state = state, onIconSourceModeChange = onIconSourceModeChange)
         ToggleComponent(
             title = stringResource(R.string.label_icon_enhancement_enabled),
             summary = if (canEditConfig) {
@@ -223,31 +219,35 @@ private fun SettingsCard(
 }
 
 @Composable
-private fun IconSourceCard(
+private fun IconSourceRow(
     state: HomeScreenState,
     onIconSourceModeChange: (RuleStore.IconSourceMode) -> Unit,
 ) {
     val canEditConfig = state.canEditConfig
-    Card(
-        modifier = Modifier
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
-    ) {
-        IconSourceOptionComponent(
-            title = stringResource(R.string.label_icon_source_rule_library),
-            summary = stringResource(R.string.label_icon_source_rule_library_summary),
-            selected = state.config.iconSourceMode == RuleStore.IconSourceMode.RuleLibrary,
-            enabled = canEditConfig,
-            onClick = { onIconSourceModeChange(RuleStore.IconSourceMode.RuleLibrary) },
-        )
-        IconSourceOptionComponent(
-            title = stringResource(R.string.label_icon_source_desktop_theme),
-            summary = stringResource(R.string.label_icon_source_desktop_theme_summary),
-            selected = state.config.iconSourceMode == RuleStore.IconSourceMode.DesktopTheme,
-            enabled = canEditConfig,
-            onClick = { onIconSourceModeChange(RuleStore.IconSourceMode.DesktopTheme) },
-        )
-    }
+    val current = state.config.iconSourceMode
+    val modes = RuleStore.IconSourceMode.entries
+    val selectedIndex = modes.indexOf(current).coerceAtLeast(0)
+    val ruleLibraryTitle = stringResource(R.string.label_icon_source_rule_library)
+    val ruleLibrarySummary = stringResource(R.string.label_icon_source_rule_library_summary)
+    val desktopThemeTitle = stringResource(R.string.label_icon_source_desktop_theme)
+    val desktopThemeSummary = stringResource(R.string.label_icon_source_desktop_theme_summary)
+    val items = listOf(
+        DropdownItem(text = ruleLibraryTitle, summary = ruleLibrarySummary),
+        DropdownItem(text = desktopThemeTitle, summary = desktopThemeSummary),
+    )
+    val modeSummary = stringResource(R.string.label_icon_source_mode_summary)
+    val unavailableSummary = stringResource(R.string.label_framework_waiting_summary)
+    OverlaySpinnerPreference(
+        title = stringResource(R.string.label_icon_source_mode),
+        summary = if (canEditConfig) modeSummary else unavailableSummary,
+        items = items,
+        selectedIndex = selectedIndex,
+        enabled = canEditConfig,
+        onSelectedIndexChange = { index ->
+            val mode = modes[index]
+            if (mode != current) onIconSourceModeChange(mode)
+        },
+    )
 }
 
 @Composable
@@ -467,32 +467,6 @@ private fun ToggleComponent(
             )
         },
         enabled = enabled,
-    )
-}
-
-@Composable
-private fun IconSourceOptionComponent(
-    title: String,
-    summary: String,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    BasicComponent(
-        title = title,
-        summary = summary,
-        startAction = {
-            RadioButton(
-                selected = selected,
-                onClick = null,
-                enabled = enabled,
-            )
-        },
-        enabled = enabled,
-        onClick = {
-            if (!selected) onClick()
-        },
-        role = Role.RadioButton,
     )
 }
 

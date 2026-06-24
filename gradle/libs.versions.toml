@@ -27,3 +27,4 @@ compose-material-icons-core = { group = "androidx.compose.material", name = "mat
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
 miuix-ui-android = { group = "top.yukonga.miuix.kmp", name = "miuix-ui-android", version.ref = "miuix" }
 miuix-icons-android = { group = "top.yukonga.miuix.kmp", name = "miuix-icons-android", version.ref = "miuix" }
+miuix-preference-android = { group = "top.yukonga.miuix.kmp", name = "miuix-preference-android", version.ref = "miuix" }
