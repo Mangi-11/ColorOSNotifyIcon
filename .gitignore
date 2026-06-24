@@ -50,6 +50,7 @@
 # Misc
 .idea/misc.xml
 .idea/markdown.xml
+.idea/vcs.xml
 
 # CMake
 cmake-build-*/

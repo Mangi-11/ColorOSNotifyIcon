@@ -57,14 +57,10 @@ android {
 androidComponents {
     onVariants(selector().all()) {
         it.outputs.forEach { output ->
-            val currentType = it.buildType
-            val currentSuffix = gropify.github.ci.commit.id.let { suffix ->
-                if (suffix.isNotBlank()) "-$suffix" else ""
-            }
-            val currentVersion = "${output.versionName.get()}$currentSuffix(${output.versionCode.get()})"
+            val currentVersion = output.versionName.get()
             val artifactName = "ColorOSNotifyIcon"
             if (output is com.android.build.api.variant.impl.VariantOutputImpl)
-                output.outputFileName.set("$artifactName-v$currentVersion-$currentType.apk")
+                output.outputFileName.set("$artifactName-$currentVersion.apk")
         }
     }
 }
