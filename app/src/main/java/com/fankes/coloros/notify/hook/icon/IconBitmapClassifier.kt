@@ -9,7 +9,7 @@ import android.graphics.drawable.AnimationDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.VectorDrawable
-import android.util.ArrayMap
+import android.util.LruCache
 import androidx.core.graphics.drawable.toBitmap
 import kotlin.math.abs
 
@@ -18,7 +18,10 @@ import kotlin.math.abs
  */
 object IconBitmapClassifier {
 
-    private val cachedBitmapGrayscales = ArrayMap<Int, Boolean>()
+    private const val MAX_CACHE_ENTRIES = 256
+
+    private val lock = Any()
+    private val cachedBitmapGrayscales = LruCache<Int, Boolean>(MAX_CACHE_ENTRIES)
     private var tempBuffer = intArrayOf(0)
     private var tempCompactBitmap: Bitmap? = null
     private var tempCompactBitmapCanvas: Canvas? = null
@@ -40,8 +43,8 @@ object IconBitmapClassifier {
         }
     }
 
-    private fun isGrayscaleBitmap(bitmap: Bitmap) =
-        cachedBitmapGrayscales[bitmap.generationId] ?: run {
+    private fun isGrayscaleBitmap(bitmap: Bitmap): Boolean = synchronized(lock) {
+        cachedBitmapGrayscales.get(bitmap.generationId) ?: run {
             var height = bitmap.height
             var width = bitmap.width
             var pixelSource: Bitmap = bitmap
@@ -64,13 +67,14 @@ object IconBitmapClassifier {
             pixelSource.getPixels(tempBuffer, 0, width, 0, 0, width, height)
             for (index in 0 until size) {
                 if (!isGrayscaleColor(tempBuffer[index])) {
-                    cachedBitmapGrayscales[bitmap.generationId] = false
+                    cachedBitmapGrayscales.put(bitmap.generationId, false)
                     return@run false
                 }
             }
-            cachedBitmapGrayscales[bitmap.generationId] = true
+            cachedBitmapGrayscales.put(bitmap.generationId, true)
             true
         }
+    }
 
     private fun isGrayscaleColor(color: Int): Boolean {
         if (color shr 24 and 255 < 50) return true

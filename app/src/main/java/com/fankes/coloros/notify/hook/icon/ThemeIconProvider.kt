@@ -18,9 +18,8 @@ import android.graphics.drawable.Drawable
 import android.os.SystemClock
 import android.os.UserHandle
 import android.service.notification.StatusBarNotification
-import android.util.Log
+import android.util.LruCache
 import androidx.core.graphics.drawable.toBitmap
-import com.fankes.coloros.notify.core.ModuleInfo
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
 import java.util.concurrent.ConcurrentHashMap
@@ -32,16 +31,28 @@ internal object ThemeIconProvider {
     private const val ICON_CONTENT_RATIO = 1f
     private const val OPAQUE_ALPHA_THRESHOLD = 8
     private const val CACHE_TTL_MS = 10_000L
+    private const val MAX_CACHE_SIZE_KIB = 4 * 1024
 
-    private val cache = ConcurrentHashMap<CacheKey, CacheEntry>()
+    private val cache = object : LruCache<CacheKey, CacheEntry>(MAX_CACHE_SIZE_KIB) {
+        override fun sizeOf(key: CacheKey, value: CacheEntry): Int =
+            ((value.result as? CacheResult.Hit)?.bitmap?.allocationByteCount ?: 1)
+                .let { bytes -> ((bytes + 1023) / 1024).coerceAtLeast(1) }
+    }
     private val onceLogs = ConcurrentHashMap.newKeySet<String>()
     private val apiLock = Any()
+
+    @Volatile
+    private var warningLogger: ((key: String, message: String, throwable: Throwable?) -> Unit)? = null
 
     @Volatile
     private var api: UxIconApi? = null
 
     @Volatile
     private var apiResolved = false
+
+    fun setWarningLogger(logger: (key: String, message: String, throwable: Throwable?) -> Unit) {
+        warningLogger = logger
+    }
 
     fun resolve(context: Context, sbn: StatusBarNotification): Bitmap? {
         val packageName = sbn.packageName?.takeIf { it.isNotBlank() } ?: return null
@@ -55,20 +66,34 @@ internal object ThemeIconProvider {
             themeChanged = themeGeneration.changed,
             themeChangedFlags = themeGeneration.flags,
         )
-        cache[key]?.takeIf { !it.isExpired() }?.let { entry ->
+        cachedEntry(key)?.takeIf { !it.isExpired() }?.let { entry ->
             return (entry.result as? CacheResult.Hit)?.bitmap
         }
 
         val bitmap = loadThemeBitmap(context, packageName, user, userId)
-        cache[key] = CacheEntry(
-            result = bitmap?.let(CacheResult::Hit) ?: CacheResult.Miss,
-            createdAt = SystemClock.elapsedRealtime(),
+        putCacheEntry(
+            key,
+            CacheEntry(
+                result = bitmap?.let(CacheResult::Hit) ?: CacheResult.Miss,
+                createdAt = SystemClock.elapsedRealtime(),
+            )
         )
         return bitmap
     }
 
     fun clearCache() {
-        cache.clear()
+        synchronized(cache) {
+            cache.evictAll()
+        }
+    }
+
+    private fun cachedEntry(key: CacheKey): CacheEntry? =
+        synchronized(cache) { cache.get(key) }
+
+    private fun putCacheEntry(key: CacheKey, entry: CacheEntry) {
+        synchronized(cache) {
+            cache.put(key, entry)
+        }
     }
 
     private fun loadThemeBitmap(
@@ -301,11 +326,7 @@ internal object ThemeIconProvider {
 
     private fun warnOnce(key: String, message: String, throwable: Throwable? = null) {
         if (!onceLogs.add(key)) return
-        if (throwable == null) {
-            Log.w(ModuleInfo.LOG_TAG, message)
-        } else {
-            Log.w(ModuleInfo.LOG_TAG, message, throwable)
-        }
+        warningLogger?.invoke(key, message, throwable)
     }
 
     private data class ResolvedPackageInfo(

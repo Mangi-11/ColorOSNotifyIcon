@@ -26,12 +26,17 @@ import com.fankes.coloros.notify.hook.reflect.Reflection
 import com.fankes.coloros.notify.hook.systemui.SystemUiMembers
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
+import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageReadyParam
 import io.github.libxposed.api.XposedModuleInterface.SystemServerStartingParam
 import java.io.FileInputStream
+import java.lang.reflect.Executable
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class ModuleMain : XposedModule() {
 
@@ -41,6 +46,8 @@ class ModuleMain : XposedModule() {
     }
 
     private val onceLogs = ConcurrentHashMap.newKeySet<String>()
+    private val systemUiIdCache = ConcurrentHashMap<String, Int>()
+    private val oplusGroupReapplyTasks = Collections.synchronizedMap(WeakHashMap<ImageView, Runnable>())
     private var systemServerInstalled = false
     private var systemUiInstalled = false
     private var systemUiConfig = RuleStore.ModuleConfig()
@@ -55,6 +62,7 @@ class ModuleMain : XposedModule() {
     }
 
     override fun onModuleLoaded(param: ModuleLoadedParam) {
+        ThemeIconProvider.setWarningLogger(::warnOnce)
         emitLog(
             Log.INFO,
             "模块已加载：process=${param.processName}, framework=$frameworkName, api=$apiVersion"
@@ -106,7 +114,7 @@ class ModuleMain : XposedModule() {
             Boolean::class.javaPrimitiveType!!,
         ) ?: return warnAndFalse("system.fix.method", "未找到 fixSmallIcon(Notification, String, String, boolean)")
 
-        hook(fixSmallIconMethod).intercept { chain ->
+        moduleHook(fixSmallIconMethod, "system.fixSmallIcon").intercept { chain ->
             val notification = chain.args.firstOrNull() as? Notification
             val originalIcon = notification?.smallIcon
             if (notification != null && originalIcon != null) {
@@ -143,7 +151,7 @@ class ModuleMain : XposedModule() {
                 "useAppIconForSmallIcon",
                 Notification::class.java,
             )?.let { method ->
-                hook(method).intercept { false }
+                moduleHook(method, "systemui.useAppIconForSmallIcon").intercept { false }
                 emitLog(Log.INFO, "SystemUI Hook：已禁用 OplusNotificationSmallIconUtil.useAppIconForSmallIcon")
             } ?: warnOnce(
                 "systemui.useAppIcon.missing",
@@ -151,7 +159,7 @@ class ModuleMain : XposedModule() {
             )
         }
 
-        hook(members.statusBarUpdateGrayScale).intercept { chain ->
+        moduleHook(members.statusBarUpdateGrayScale, "systemui.statusbar.updateGrayScale").intercept { chain ->
             val drawable = chain.args.getOrNull(0) as? Drawable ?: return@intercept chain.proceed()
             val statusBarIconView = chain.args.getOrNull(1) ?: return@intercept chain.proceed()
             val sbn = chain.args.getOrNull(2) as? StatusBarNotification ?: return@intercept chain.proceed()
@@ -164,7 +172,7 @@ class ModuleMain : XposedModule() {
             null
         }
 
-        hook(members.iconManagerGetIconDescriptor).intercept { chain ->
+        moduleHook(members.iconManagerGetIconDescriptor, "systemui.statusbar.getIconDescriptor").intercept { chain ->
             val result = chain.proceed()
             val statusBarIcon = result ?: return@intercept result
             val notificationEntry = chain.args.getOrNull(0) ?: return@intercept statusBarIcon
@@ -206,7 +214,10 @@ class ModuleMain : XposedModule() {
     private fun installSystemUiConfigRefreshHook(members: SystemUiMembers) {
         members.viewConfigCoordinatorConstructors.forEach { constructor ->
             runCatching {
-                hook(constructor).intercept { chain ->
+                moduleHook(
+                    constructor,
+                    "systemui.refresh.coordinator.constructor.${constructor.parameterTypes.size}"
+                ).intercept { chain ->
                     val result = chain.proceed()
                     notificationRefreshCoordinator = chain.thisObject ?: notificationRefreshCoordinator
                     result
@@ -217,7 +228,7 @@ class ModuleMain : XposedModule() {
         }
         members.viewConfigCoordinatorAttach?.let { method ->
             runCatching {
-                hook(method).intercept { chain ->
+                moduleHook(method, "systemui.refresh.coordinator.attach").intercept { chain ->
                     val result = chain.proceed()
                     notificationRefreshCoordinator = chain.thisObject ?: notificationRefreshCoordinator
                     result
@@ -238,7 +249,7 @@ class ModuleMain : XposedModule() {
 
     private fun installNotificationPanelHooks(members: SystemUiMembers) {
         members.notificationHeaderOnContentUpdated?.let { method ->
-            hook(method).intercept { chain ->
+            moduleHook(method, "systemui.panel.header.onContentUpdated").intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
                 applyPanelIconReplacement(members, wrapper, chain.args.firstOrNull())
@@ -246,7 +257,7 @@ class ModuleMain : XposedModule() {
             }
         }
         members.notificationHeaderResolveHeaderViews?.let { method ->
-            hook(method).intercept { chain ->
+            moduleHook(method, "systemui.panel.header.resolveHeaderViews").intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
                 applyPanelIconReplacement(members, wrapper)
@@ -254,7 +265,7 @@ class ModuleMain : XposedModule() {
             }
         }
         members.oplusGroupInitIcon?.let { method ->
-            hook(method).intercept { chain ->
+            moduleHook(method, "systemui.panel.group.initIcon").intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
                 applyPanelIconReplacement(members, wrapper, target = PanelIconTarget.OplusGroupSummary)
@@ -262,7 +273,7 @@ class ModuleMain : XposedModule() {
             }
         }
         members.oplusGroupResolveHeaderViews?.let { method ->
-            hook(method).intercept { chain ->
+            moduleHook(method, "systemui.panel.group.resolveHeaderViews").intercept { chain ->
                 val result = chain.proceed()
                 val wrapper = chain.thisObject ?: return@intercept result
                 applyPanelIconReplacement(members, wrapper, target = PanelIconTarget.OplusGroupSummary)
@@ -336,7 +347,8 @@ class ModuleMain : XposedModule() {
     }
 
     private fun View.systemUiId(name: String): Int =
-        resources.getIdentifier(name, "id", SystemPackages.SYSTEM_UI)
+        systemUiIdCache[name] ?: resources.getIdentifier(name, "id", SystemPackages.SYSTEM_UI)
+            .also { systemUiIdCache[name] = it }
 
     private fun ImageView.applyPanelIconRenderPlan(
         plan: NotificationIconResolver.PanelIconRenderPlan,
@@ -385,11 +397,25 @@ class ModuleMain : XposedModule() {
         plan: NotificationIconResolver.PanelIconRenderPlan,
         isStillSameNotification: () -> Boolean,
     ) {
-        val action = Runnable {
-            if (!isAttachedToWindow || !isStillSameNotification()) return@Runnable
-            clearOplusGroupSummaryDecoration()
-            applyPanelIconRenderPlan(plan, PanelIconTarget.OplusGroupSummary)
+        oplusGroupReapplyTasks.remove(this)?.let { removeCallbacks(it) }
+        val remainingRuns = AtomicInteger(OPLUS_GROUP_ICON_REAPPLY_DELAYS_MS.size)
+        lateinit var action: Runnable
+        action = Runnable {
+            try {
+                if (!isAttachedToWindow || !isStillSameNotification()) return@Runnable
+                clearOplusGroupSummaryDecoration()
+                applyPanelIconRenderPlan(plan, PanelIconTarget.OplusGroupSummary)
+            } finally {
+                if (remainingRuns.decrementAndGet() <= 0) {
+                    synchronized(oplusGroupReapplyTasks) {
+                        if (oplusGroupReapplyTasks[this] === action) {
+                            oplusGroupReapplyTasks.remove(this)
+                        }
+                    }
+                }
+            }
         }
+        oplusGroupReapplyTasks[this] = action
         OPLUS_GROUP_ICON_REAPPLY_DELAYS_MS.forEach { delay ->
             postDelayed(action, delay)
         }
@@ -483,12 +509,15 @@ class ModuleMain : XposedModule() {
     private fun emitLog(priority: Int, message: String, throwable: Throwable? = null) {
         if (throwable == null) {
             log(priority, ModuleInfo.LOG_TAG, message)
-            Log.println(priority, ModuleInfo.LOG_TAG, message)
         } else {
             log(priority, ModuleInfo.LOG_TAG, message, throwable)
-            Log.println(priority, ModuleInfo.LOG_TAG, "$message\n${Log.getStackTraceString(throwable)}")
         }
     }
+
+    private fun moduleHook(origin: Executable, id: String): XposedInterface.HookBuilder =
+        hook(origin)
+            .setId("${ModuleInfo.LOG_TAG}.$id")
+            .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
 
     private fun warnAndFalse(key: String, message: String): Boolean {
         warnOnce(key, message)
