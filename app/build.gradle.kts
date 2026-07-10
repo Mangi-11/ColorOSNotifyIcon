@@ -83,4 +83,5 @@ dependencies {
     implementation(libs.miuix.ui.android)
     implementation(libs.miuix.icons.android)
     implementation(libs.miuix.preference.android)
+    testImplementation(libs.junit)
 }

@@ -23,6 +23,7 @@ import com.fankes.coloros.notify.hook.icon.IconBitmapClassifier
 import com.fankes.coloros.notify.hook.icon.NotificationIconResolver
 import com.fankes.coloros.notify.hook.icon.ThemeIconProvider
 import com.fankes.coloros.notify.hook.reflect.Reflection
+import com.fankes.coloros.notify.hook.systemui.HeaderIconClaimRegistry
 import com.fankes.coloros.notify.hook.systemui.SystemUiMembers
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
@@ -47,6 +48,7 @@ class ModuleMain : XposedModule() {
 
     private val onceLogs = ConcurrentHashMap.newKeySet<String>()
     private val systemUiIdCache = ConcurrentHashMap<String, Int>()
+    private val headerIconClaims = HeaderIconClaimRegistry<ImageView, Drawable>()
     private val oplusGroupReapplyTasks = Collections.synchronizedMap(WeakHashMap<ImageView, Runnable>())
     private var systemServerInstalled = false
     private var systemUiInstalled = false
@@ -81,6 +83,7 @@ class ModuleMain : XposedModule() {
     }
 
     private fun reloadSystemUiConfig() {
+        headerIconClaims.clear()
         val remotePrefs = remotePrefsOrNull()
         val rulesJson = loadRemoteRulesJson()
         systemUiConfig = RuleStore.readModuleConfig(remotePrefs)
@@ -248,6 +251,7 @@ class ModuleMain : XposedModule() {
     }
 
     private fun installNotificationPanelHooks(members: SystemUiMembers) {
+        installOplusHeaderColorGuard(members)
         members.notificationHeaderOnContentUpdated?.let { method ->
             moduleHook(method, "systemui.panel.header.onContentUpdated").intercept { chain ->
                 val result = chain.proceed()
@@ -283,6 +287,35 @@ class ModuleMain : XposedModule() {
         emitLog(Log.INFO, "SystemUI Hook 已安装：通知面板图标路径")
     }
 
+    private fun installOplusHeaderColorGuard(members: SystemUiMembers) {
+        val oplusHeader = members.oplusHeader ?: return
+        val getIcon = members.notificationHeaderGetIcon ?: return
+        val rowField = members.notificationViewWrapperRowField ?: return
+
+        moduleHook(oplusHeader.updateIconColor, "systemui.panel.header.updateIconColor").intercept { chain ->
+            if (!systemUiConfig.panelIconReplacementEnabled) return@intercept chain.proceed()
+            val extension = chain.thisObject ?: return@intercept chain.proceed()
+            val wrapper = runCatching {
+                oplusHeader.getBase.invoke(extension)
+            }.getOrNull() ?: return@intercept chain.proceed()
+            val icon = runCatching {
+                getIcon.invoke(wrapper) as? ImageView
+            }.getOrNull() ?: return@intercept chain.proceed()
+            val row = runCatching {
+                rowField.get(wrapper)
+            }.getOrNull() ?: return@intercept chain.proceed()
+            val sbn = statusBarNotificationFromRow(members, row) ?: return@intercept chain.proceed()
+            val drawable = icon.drawable ?: return@intercept chain.proceed()
+
+            if (headerIconClaims.isCurrentClaim(icon, sbn.key, drawable)) false
+            else chain.proceed()
+        }
+        infoOnce(
+            "systemui.panel.header.color.guard",
+            "SystemUI Hook 已安装：Oplus Header 二次着色保护",
+        )
+    }
+
     private fun applyPanelIconReplacement(
         members: SystemUiMembers,
         wrapper: Any,
@@ -308,6 +341,7 @@ class ModuleMain : XposedModule() {
             }
             return
         }
+        if (target == PanelIconTarget.Header) headerIconClaims.release(icon)
         ensureSystemUiRefreshReceiver(icon.context, members)
         val sbn = statusBarNotificationFromRow(members, row) ?: return
         val renderPlan = iconResolver().resolvePanelIconPlan(
@@ -330,6 +364,9 @@ class ModuleMain : XposedModule() {
                 infoOnce("systemui.panel.oplus.group.icon", "SystemUI Hook 已安装：Oplus 聚合摘要图标路径")
             } else {
                 icon.applyPanelIconRenderPlan(effectivePlan, target)
+                icon.drawable?.let { drawable ->
+                    headerIconClaims.claim(icon, sbn.key, drawable)
+                }
             }
         }.onFailure {
             warnOnce("systemui.panel.icon.replace", "通知面板规则图标注入失败", it)

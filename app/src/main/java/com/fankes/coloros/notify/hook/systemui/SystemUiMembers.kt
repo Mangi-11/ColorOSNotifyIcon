@@ -7,6 +7,11 @@ import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
+internal data class OplusHeaderMembers(
+    val getBase: Method,
+    val updateIconColor: Method,
+)
+
 internal data class SystemUiMembers(
     val statusBarUpdateGrayScale: Method,
     val statusBarSetIsIconColorable: Method,
@@ -21,6 +26,7 @@ internal data class SystemUiMembers(
     val notificationHeaderGetIcon: Method?,
     val notificationViewWrapperRowField: Field?,
     val expandableRowGetEntry: Method?,
+    val oplusHeader: OplusHeaderMembers?,
     val oplusGroupInitIcon: Method?,
     val oplusGroupResolveHeaderViews: Method?,
     val viewConfigCoordinatorConstructors: List<Constructor<*>>,
@@ -65,6 +71,8 @@ internal data class SystemUiMembers(
                 loadOptional("com.android.systemui.statusbar.notification.row.wrapper.NotificationHeaderViewWrapper")
             val oplusGroupTemplateWrapperClass =
                 loadOptional("com.oplus.systemui.notification.row.oplusgroup.OplusNotificationGroupTemplateWrapper")
+            val oplusHeaderViewWrapperExImpClass =
+                loadOptional("com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationHeaderViewWrapperExImp")
             val viewConfigCoordinatorClass =
                 loadOptional("com.android.systemui.statusbar.notification.collection.coordinator.ViewConfigCoordinator")
             val notifPipelineClass =
@@ -115,6 +123,21 @@ internal data class SystemUiMembers(
                 ?.let { Reflection.findField(it, "mRow") }
             val expandableRowGetEntry = expandableNotificationRowClass
                 ?.let { Reflection.findMethod(it, "getEntry") }
+            val oplusHeader = oplusHeaderViewWrapperExImpClass?.let { wrapperClass ->
+                val getBase = Reflection.findMethod(wrapperClass, "getBase")
+                val updateIconColor = Reflection.findMethod(wrapperClass, "updateIconColor")
+                    ?.takeIf { it.returnType == Boolean::class.javaPrimitiveType }
+                if (getBase == null || updateIconColor == null) {
+                    warn(
+                        "member:oplus.header.color",
+                        "Oplus Header 已存在，但 getBase() 或 updateIconColor(): boolean 签名不匹配",
+                        null,
+                    )
+                    null
+                } else {
+                    OplusHeaderMembers(getBase, updateIconColor)
+                }
+            }
             val oplusGroupInitIcon = oplusGroupTemplateWrapperClass
                 ?.let { Reflection.findMethod(it, "initIcon") }
             val oplusGroupResolveHeaderViews = oplusGroupTemplateWrapperClass
@@ -144,6 +167,7 @@ internal data class SystemUiMembers(
                 notificationHeaderGetIcon = notificationHeaderGetIcon,
                 notificationViewWrapperRowField = notificationViewWrapperRowField,
                 expandableRowGetEntry = expandableRowGetEntry,
+                oplusHeader = oplusHeader,
                 oplusGroupInitIcon = oplusGroupInitIcon,
                 oplusGroupResolveHeaderViews = oplusGroupResolveHeaderViews,
                 viewConfigCoordinatorConstructors = viewConfigCoordinatorConstructors,

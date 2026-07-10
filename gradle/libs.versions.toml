@@ -8,6 +8,7 @@ androidx-core-ktx = "1.19.0"
 compose-bom = "2026.05.01"
 activity-compose = "1.13.0"
 miuix = "0.9.2"
+junit = "4.13.2"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -28,3 +29,4 @@ activity-compose = { group = "androidx.activity", name = "activity-compose", ver
 miuix-ui-android = { group = "top.yukonga.miuix.kmp", name = "miuix-ui-android", version.ref = "miuix" }
 miuix-icons-android = { group = "top.yukonga.miuix.kmp", name = "miuix-icons-android", version.ref = "miuix" }
 miuix-preference-android = { group = "top.yukonga.miuix.kmp", name = "miuix-preference-android", version.ref = "miuix" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
