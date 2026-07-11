@@ -1,6 +1,7 @@
 package com.fankes.coloros.notify.hook.icon
 
 import android.content.res.Configuration
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -31,5 +32,10 @@ class ThemeIconDarkEffectTest {
     @Test
     fun `ColorOS dark theme is always dimmed at night`() {
         assertTrue(ThemeIconDarkEffect.isEnabled(Configuration.UI_MODE_NIGHT_YES, 3L shl 4))
+    }
+
+    @Test
+    fun `color treatment preserves alpha and mirrors the launcher multiplier`() {
+        assertEquals(0x80D66B00.toInt(), ThemeIconDarkEffect.apply(0x80FF8000.toInt()))
     }
 }

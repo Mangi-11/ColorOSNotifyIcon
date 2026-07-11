@@ -8,7 +8,6 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.LauncherApps
 import android.content.pm.PackageItemInfo
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -31,11 +30,11 @@ import com.fankes.coloros.notify.hook.memberMissing
 import com.fankes.coloros.notify.hook.runtimeFailure
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
-import java.lang.reflect.Modifier
 import kotlin.math.max
 
 internal class ThemeIconProvider(
     private val diagnostics: Diagnostics,
+    private val iconConfiguration: OplusIconConfigurationReader,
 ) {
 
     private val cache = object : LruCache<CacheKey, CacheEntry>(MAX_CACHE_SIZE_KIB) {
@@ -56,27 +55,20 @@ internal class ThemeIconProvider(
         return try {
             val user = sbn.user
             val userId = sbn.publicUserId
-            val themeGeneration = context.themeGeneration()
-            val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+            val configuration = iconConfiguration.read(context)
             val key = CacheKey(
                 packageName = packageName,
                 userId = userId,
-                uiMode = uiMode,
-                themeChanged = themeGeneration.changed,
-                themeChangedFlags = themeGeneration.flags,
-                uxIconConfig = themeGeneration.uxIconConfig,
+                uiMode = configuration.uiMode,
+                themeChanged = configuration.themeChanged,
+                themeChangedFlags = configuration.themeChangedFlags,
+                uxIconConfig = configuration.uxIconConfig,
             )
             cachedEntry(key)?.takeIf { !it.isExpired() }?.let { entry ->
                 return (entry.result as? CacheResult.Hit)?.bitmap
             }
 
-            val bitmap = loadThemeBitmap(context, packageName, user, userId)?.let {
-                if (ThemeIconDarkEffect.isEnabled(uiMode, themeGeneration.uxIconConfig)) {
-                    ThemeIconDarkEffect.apply(it)
-                } else {
-                    it
-                }
-            }
+            val bitmap = loadThemeBitmap(context, packageName, user, userId)
             putCacheEntry(
                 key,
                 CacheEntry(
@@ -336,108 +328,6 @@ internal class ThemeIconProvider(
         null
     }
 
-    private fun Context.themeGeneration(): ThemeGeneration {
-        val extraConfiguration = resources.configuration.oplusExtraConfigurationOrNull()
-        return ThemeGeneration(
-            changed = extraConfiguration?.longMember("mThemeChanged", "getThemeChanged") ?: 0L,
-            flags = extraConfiguration?.longMember("mThemeChangedFlags", "getThemeChangedFlags") ?: 0L,
-            uxIconConfig = extraConfiguration?.longMember("mUxIconConfig", "getUxIconConfig") ?: -1L,
-        )
-    }
-
-    private fun Configuration.oplusExtraConfigurationOrNull(): Any? {
-        val accessor = try {
-            javaClass.getMethod("getOplusExtraConfiguration")
-        } catch (_: NoSuchMethodException) {
-            null
-        }
-        if (
-            accessor != null &&
-            !Modifier.isStatic(accessor.modifiers) &&
-            accessor.returnType != Void.TYPE
-        ) {
-            try {
-                return accessor.invoke(this)
-            } catch (exception: Exception) {
-                diagnostics.runtimeFailure(
-                    scope = "theme_icon:theme_generation",
-                    message = "读取 Oplus 主题代次失败，尝试字段回退",
-                    cause = exception,
-                )
-            }
-        } else if (accessor != null) {
-            diagnostics.memberMissing(
-                scope = "theme_icon:extra_configuration_accessor",
-                message = "Oplus 主题代次访问器不是预期的实例非 void 方法，尝试字段回退",
-            )
-        }
-        return try {
-            javaClass.getDeclaredField("mOplusExtraConfiguration")
-                .apply { isAccessible = true }
-                .get(this)
-        } catch (exception: NoSuchFieldException) {
-            diagnostics.memberMissing(
-                scope = "theme_icon:extra_configuration",
-                message = "未找到 Oplus 主题代次成员，使用短期缓存",
-                cause = exception,
-            )
-            null
-        } catch (exception: Exception) {
-            diagnostics.runtimeFailure(
-                scope = "theme_icon:extra_configuration",
-                message = "读取 Oplus 主题配置失败，使用短期缓存",
-                cause = exception,
-            )
-            null
-        }
-    }
-
-    private fun Any.longMember(fieldName: String, methodName: String): Long? {
-        try {
-            javaClass.getDeclaredField(fieldName)
-                .apply { isAccessible = true }
-                .get(this)
-                .toLongOrNull()
-                ?.let { return it }
-        } catch (_: NoSuchFieldException) {
-            // Try the known accessor below.
-        } catch (exception: Exception) {
-            diagnostics.runtimeFailure(
-                scope = "theme_icon:theme_generation:$fieldName",
-                message = "读取 Oplus 主题代次字段失败，尝试访问器",
-                cause = exception,
-            )
-        }
-        val accessor = try {
-            javaClass.getMethod(methodName)
-        } catch (_: NoSuchMethodException) {
-            null
-        }?.takeIf {
-            it.returnType == Long::class.javaPrimitiveType || Number::class.java.isAssignableFrom(it.returnType)
-        } ?: run {
-            diagnostics.memberMissing(
-                scope = "theme_icon:theme_generation:$fieldName",
-                message = "未找到 Oplus 主题代次成员，使用短期缓存",
-            )
-            return null
-        }
-        return try {
-            accessor.invoke(this).toLongOrNull()
-        } catch (exception: Exception) {
-            diagnostics.runtimeFailure(
-                scope = "theme_icon:theme_generation:$methodName",
-                message = "读取 Oplus 主题代次字段失败，使用短期缓存",
-                cause = exception,
-            )
-            null
-        }
-    }
-
-    private fun Any?.toLongOrNull(): Long? = when (this) {
-        is Number -> toLong()
-        else -> null
-    }
-
     // UserHandle#getIdentifier is hidden from the public SDK used by this module.
     @Suppress("DEPRECATION")
     private val StatusBarNotification.publicUserId: Int
@@ -544,12 +434,6 @@ internal class ThemeIconProvider(
         val uiMode: Int,
         val themeChanged: Long,
         val themeChangedFlags: Long,
-        val uxIconConfig: Long,
-    )
-
-    private data class ThemeGeneration(
-        val changed: Long,
-        val flags: Long,
         val uxIconConfig: Long,
     )
 

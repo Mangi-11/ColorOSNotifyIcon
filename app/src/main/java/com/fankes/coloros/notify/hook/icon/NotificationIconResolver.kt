@@ -17,6 +17,7 @@ internal class NotificationIconResolver(
     config: RuleStore.ModuleConfig,
     private val rules: Map<String, IconRule>,
     private val themeIcons: ThemeIconProvider,
+    private val iconConfiguration: OplusIconConfigurationReader,
     private val diagnostics: Diagnostics,
     private val revision: Long,
 ) {
@@ -34,11 +35,11 @@ internal class NotificationIconResolver(
         currentStatusBarIcon: Icon?,
     ): Icon? = resolveOrFallback("status_bar", "状态栏图标解析失败") {
         if (NotificationIconPolicy.shouldKeepHostDefault(policyConfig, sbn.isOplusPush())) return null
-        resolveThemeIconReplacement(context, sbn)?.toIconOrNull("status_bar")?.let { return it }
+        resolveThemeIconReplacement(context, sbn)?.toIconOrNull(context, "status_bar")?.let { return it }
         val originalDrawable = originalSmallIcon?.loadDrawable(context)?.mutate() ?: return null
         val originalIsMonochrome = IconBitmapClassifier.isMonochromeDrawable(originalDrawable)
         resolveRuleIconReplacement(sbn, originalIsMonochrome)
-            ?.toIconOrNull("status_bar")
+            ?.toIconOrNull(context, "status_bar")
             ?.let { return it }
 
         if (
@@ -114,32 +115,39 @@ internal class NotificationIconResolver(
         }
     }
 
-    private fun IconReplacement.toIcon(): Icon = when (this) {
-        is IconReplacement.ThemeIcon -> Icon.createWithBitmap(bitmap)
-        is IconReplacement.RuleIcon -> Icon.createWithBitmap(rule.iconBitmap)
-        IconReplacement.Placeholder -> Icon.createWithBitmap(PlaceholderIconFactory.createBitmap())
+    private fun IconReplacement.toIcon(context: Context): Icon {
+        val darkEffectEnabled = context.isDarkIconEffectEnabled()
+        return when (this) {
+            is IconReplacement.ThemeIcon -> Icon.createWithBitmap(bitmap.withDarkEffect(darkEffectEnabled))
+            is IconReplacement.RuleIcon -> Icon.createWithBitmap(rule.iconBitmap.withDarkEffect(darkEffectEnabled))
+            IconReplacement.Placeholder -> Icon.createWithBitmap(PlaceholderIconFactory.createBitmap())
+        }
     }
 
-    private fun IconReplacement.toIconOrNull(feature: String): Icon? = try {
-        toIcon()
+    private fun IconReplacement.toIconOrNull(context: Context, feature: String): Icon? = try {
+        toIcon(context)
     } catch (exception: Exception) {
         reportReplacementFailure(feature, exception)
         null
     }
 
-    private fun IconReplacement.toPanelIconRenderPlan(context: Context): PanelIconRenderPlan = when (this) {
-        is IconReplacement.ThemeIcon -> PanelIconRenderPlan(
-            drawable = bitmap.toDrawable(context.resources),
-            tintColor = null,
-        )
-        is IconReplacement.RuleIcon -> PanelIconRenderPlan(
-            drawable = rule.iconBitmap.toDrawable(context.resources),
-            tintColor = rule.iconColor.takeIf { it != 0 } ?: context.defaultPanelIconTint,
-        )
-        IconReplacement.Placeholder -> PanelIconRenderPlan(
-            drawable = PlaceholderIconFactory.createBitmap().toDrawable(context.resources),
-            tintColor = context.defaultPanelIconTint,
-        )
+    private fun IconReplacement.toPanelIconRenderPlan(context: Context): PanelIconRenderPlan {
+        val darkEffectEnabled = context.isDarkIconEffectEnabled()
+        return when (this) {
+            is IconReplacement.ThemeIcon -> PanelIconRenderPlan(
+                drawable = bitmap.withDarkEffect(darkEffectEnabled).toDrawable(context.resources),
+                tintColor = null,
+            )
+            is IconReplacement.RuleIcon -> PanelIconRenderPlan(
+                drawable = rule.iconBitmap.toDrawable(context.resources),
+                tintColor = (rule.iconColor.takeIf { it != 0 } ?: context.defaultPanelIconTint)
+                    .withDarkEffect(darkEffectEnabled),
+            )
+            IconReplacement.Placeholder -> PanelIconRenderPlan(
+                drawable = PlaceholderIconFactory.createBitmap().toDrawable(context.resources),
+                tintColor = context.defaultPanelIconTint,
+            )
+        }
     }
 
     private fun IconReplacement.toPanelIconRenderPlanOrNull(
@@ -160,6 +168,17 @@ internal class NotificationIconResolver(
             revision = revision,
         )
     }
+
+    private fun Context.isDarkIconEffectEnabled(): Boolean {
+        val configuration = iconConfiguration.read(this)
+        return ThemeIconDarkEffect.isEnabled(configuration.uiMode, configuration.uxIconConfig)
+    }
+
+    private fun Bitmap.withDarkEffect(enabled: Boolean): Bitmap =
+        if (enabled) ThemeIconDarkEffect.apply(this) else this
+
+    private fun Int.withDarkEffect(enabled: Boolean): Int =
+        if (enabled) ThemeIconDarkEffect.apply(this) else this
 
     private val Context.defaultPanelIconTint: Int
         get() {

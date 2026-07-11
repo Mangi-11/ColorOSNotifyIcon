@@ -2,6 +2,7 @@ package com.fankes.coloros.notify.hook.systemui
 
 import com.fankes.coloros.notify.diagnostics.Diagnostics
 import com.fankes.coloros.notify.hook.HookRegistrar
+import com.fankes.coloros.notify.hook.icon.OplusIconConfigurationReader
 import com.fankes.coloros.notify.hook.icon.ThemeIconProvider
 import com.fankes.coloros.notify.hook.installationFailure
 import com.fankes.coloros.notify.hook.memberMissing
@@ -15,12 +16,14 @@ internal class SystemUiRuntime(
     private val processName: String,
 ) {
     fun install(classLoader: ClassLoader) {
-        val themeIcons = ThemeIconProvider(diagnostics)
+        val iconConfiguration = OplusIconConfigurationReader(diagnostics)
+        val themeIcons = ThemeIconProvider(diagnostics, iconConfiguration)
         val configuration = SystemUiConfiguration(
             xposed = xposed,
             diagnostics = diagnostics,
             processName = processName,
             themeIcons = themeIcons,
+            iconConfiguration = iconConfiguration,
         )
         var refreshBridge: NotificationRefreshBridge? = null
         var panelHooks: NotificationPanelHooks? = null

@@ -8,6 +8,7 @@ import com.fankes.coloros.notify.diagnostics.DiagnosticLevel
 import com.fankes.coloros.notify.diagnostics.Diagnostics
 import com.fankes.coloros.notify.diagnostics.OccurrencePolicy
 import com.fankes.coloros.notify.hook.icon.NotificationIconResolver
+import com.fankes.coloros.notify.hook.icon.OplusIconConfigurationReader
 import com.fankes.coloros.notify.hook.icon.ThemeIconProvider
 import com.fankes.coloros.notify.hook.runtimeFailure
 import com.fankes.coloros.notify.rules.IconRule
@@ -35,6 +36,7 @@ internal class SystemUiConfiguration(
     private val diagnostics: Diagnostics,
     private val processName: String,
     private val themeIcons: ThemeIconProvider,
+    private val iconConfiguration: OplusIconConfigurationReader,
 ) : SharedPreferences.OnSharedPreferenceChangeListener {
 
     private data class CatalogCandidate(
@@ -272,6 +274,7 @@ internal class SystemUiConfiguration(
             config = config,
             rules = rules,
             themeIcons = themeIcons,
+            iconConfiguration = iconConfiguration,
             diagnostics = diagnostics,
             revision = revision,
         ),

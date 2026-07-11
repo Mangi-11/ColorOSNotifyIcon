@@ -34,4 +34,17 @@ internal object ThemeIconDarkEffect {
         Canvas(result).drawBitmap(bitmap, 0f, 0f, paint)
         return result
     }
+
+    fun apply(color: Int): Int =
+        (color and ALPHA_MASK) or
+            (darken(color ushr RED_SHIFT and CHANNEL_MASK) shl RED_SHIFT) or
+            (darken(color ushr GREEN_SHIFT and CHANNEL_MASK) shl GREEN_SHIFT) or
+            darken(color and CHANNEL_MASK)
+
+    private fun darken(channel: Int): Int = (channel * 0xD6) / 0xFF
+
+    private const val ALPHA_MASK = -0x1000000
+    private const val CHANNEL_MASK = 0xFF
+    private const val RED_SHIFT = 16
+    private const val GREEN_SHIFT = 8
 }
