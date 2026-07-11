@@ -49,8 +49,7 @@ internal class HookRegistrar(
             .setId("${ModuleInfo.LOG_TAG}.$id")
             .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
             .intercept(XposedInterface.Hooker(interceptor))
-        diagnostics.report(
-            level = DiagnosticLevel.Info,
+        diagnostics.debug(
             event = DiagnosticEvent.HookInstalled,
             message = "Hook 已安装",
             attributes = attributes(id),

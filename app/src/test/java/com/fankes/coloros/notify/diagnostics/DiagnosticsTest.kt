@@ -7,6 +7,24 @@ import org.junit.Test
 class DiagnosticsTest {
 
     @Test
+    fun `debug entry point emits a structured debug record`() {
+        val records = mutableListOf<DiagnosticRecord>()
+        val diagnostics = Diagnostics(DiagnosticSink { records += it })
+
+        diagnostics.debug(
+            event = DiagnosticEvent.HookInstalled,
+            message = "installed",
+            attributes = mapOf("hook" to "statusbar"),
+            occurrence = OccurrencePolicy.Always,
+        )
+
+        assertEquals(1, records.size)
+        assertEquals(DiagnosticLevel.Debug, records.single().level)
+        assertEquals(DiagnosticEvent.HookInstalled, records.single().event)
+        assertEquals(mapOf("hook" to "statusbar"), records.single().attributes)
+    }
+
+    @Test
     fun `once policy is scoped by event and caller scope`() {
         val records = mutableListOf<DiagnosticRecord>()
         val diagnostics = Diagnostics(DiagnosticSink { records += it })

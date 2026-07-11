@@ -38,10 +38,10 @@ class ModuleMain : XposedModule() {
             occurrence = OccurrencePolicy.Once(processName),
         )
         if (target == ProcessTarget.Ignore) {
-            diagnostics.report(
-                level = DiagnosticLevel.Info,
+            diagnostics.debug(
                 event = DiagnosticEvent.ProcessIgnored,
                 message = "当前进程不承载任何模块功能",
+                attributes = emptyMap(),
                 occurrence = OccurrencePolicy.Once(processName),
             )
             detach()
@@ -93,10 +93,10 @@ class ModuleMain : XposedModule() {
     override fun onHotReloading(param: HotReloadingParam): Boolean = false
 
     private fun detachAfterInitialization() {
-        diagnostics.report(
-            level = DiagnosticLevel.Info,
+        diagnostics.debug(
             event = DiagnosticEvent.LifecycleDetached,
             message = "初始化完成，停止接收后续生命周期回调",
+            attributes = emptyMap(),
             occurrence = OccurrencePolicy.Once("initialized:$processName"),
         )
         detach()

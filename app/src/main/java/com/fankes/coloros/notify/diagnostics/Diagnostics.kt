@@ -100,6 +100,24 @@ internal class Diagnostics(
     private val emittedOnce = ConcurrentHashMap.newKeySet<String>()
     private val lastEmission = ConcurrentHashMap<String, Long>()
 
+    /**
+     * Development-only diagnostics. R8 removes this entry point and its call sites from Release.
+     */
+    fun debug(
+        event: DiagnosticEvent,
+        message: String,
+        attributes: Map<String, Any?>,
+        occurrence: OccurrencePolicy,
+    ) {
+        report(
+            level = DiagnosticLevel.Debug,
+            event = event,
+            message = message,
+            attributes = attributes,
+            occurrence = occurrence,
+        )
+    }
+
     fun report(
         level: DiagnosticLevel,
         event: DiagnosticEvent,
