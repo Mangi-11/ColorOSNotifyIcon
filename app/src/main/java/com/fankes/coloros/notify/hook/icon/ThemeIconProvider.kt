@@ -1,5 +1,6 @@
 package com.fankes.coloros.notify.hook.icon
 
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.ActivityInfo
@@ -19,30 +20,30 @@ import android.os.SystemClock
 import android.os.UserHandle
 import android.service.notification.StatusBarNotification
 import android.util.LruCache
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.get
 import androidx.core.graphics.drawable.toBitmap
+import com.fankes.coloros.notify.diagnostics.DiagnosticEvent
+import com.fankes.coloros.notify.diagnostics.DiagnosticLevel
+import com.fankes.coloros.notify.diagnostics.Diagnostics
+import com.fankes.coloros.notify.diagnostics.OccurrencePolicy
+import com.fankes.coloros.notify.hook.memberMissing
+import com.fankes.coloros.notify.hook.runtimeFailure
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
-import java.util.concurrent.ConcurrentHashMap
+import java.lang.reflect.Modifier
 import kotlin.math.max
 
-internal object ThemeIconProvider {
-
-    private const val UX_ICON_PACKAGE_MANAGER_EXT = "android.app.UxIconPackageManagerExt"
-    private const val ICON_CONTENT_RATIO = 1f
-    private const val OPAQUE_ALPHA_THRESHOLD = 8
-    private const val CACHE_TTL_MS = 10_000L
-    private const val MAX_CACHE_SIZE_KIB = 4 * 1024
+internal class ThemeIconProvider(
+    private val diagnostics: Diagnostics,
+) {
 
     private val cache = object : LruCache<CacheKey, CacheEntry>(MAX_CACHE_SIZE_KIB) {
         override fun sizeOf(key: CacheKey, value: CacheEntry): Int =
             ((value.result as? CacheResult.Hit)?.bitmap?.allocationByteCount ?: 1)
                 .let { bytes -> ((bytes + 1023) / 1024).coerceAtLeast(1) }
     }
-    private val onceLogs = ConcurrentHashMap.newKeySet<String>()
     private val apiLock = Any()
-
-    @Volatile
-    private var warningLogger: ((key: String, message: String, throwable: Throwable?) -> Unit)? = null
 
     @Volatile
     private var api: UxIconApi? = null
@@ -50,35 +51,40 @@ internal object ThemeIconProvider {
     @Volatile
     private var apiResolved = false
 
-    fun setWarningLogger(logger: (key: String, message: String, throwable: Throwable?) -> Unit) {
-        warningLogger = logger
-    }
-
     fun resolve(context: Context, sbn: StatusBarNotification): Bitmap? {
         val packageName = sbn.packageName?.takeIf { it.isNotBlank() } ?: return null
-        val user = runCatching { sbn.user }.getOrNull()
-        val userId = user.identifierOrDefault()
-        val themeGeneration = context.themeGeneration()
-        val key = CacheKey(
-            packageName = packageName,
-            userId = userId,
-            uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
-            themeChanged = themeGeneration.changed,
-            themeChangedFlags = themeGeneration.flags,
-        )
-        cachedEntry(key)?.takeIf { !it.isExpired() }?.let { entry ->
-            return (entry.result as? CacheResult.Hit)?.bitmap
-        }
-
-        val bitmap = loadThemeBitmap(context, packageName, user, userId)
-        putCacheEntry(
-            key,
-            CacheEntry(
-                result = bitmap?.let(CacheResult::Hit) ?: CacheResult.Miss,
-                createdAt = SystemClock.elapsedRealtime(),
+        return try {
+            val user = sbn.user
+            val userId = sbn.publicUserId
+            val themeGeneration = context.themeGeneration()
+            val key = CacheKey(
+                packageName = packageName,
+                userId = userId,
+                uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
+                themeChanged = themeGeneration.changed,
+                themeChangedFlags = themeGeneration.flags,
             )
-        )
-        return bitmap
+            cachedEntry(key)?.takeIf { !it.isExpired() }?.let { entry ->
+                return (entry.result as? CacheResult.Hit)?.bitmap
+            }
+
+            val bitmap = loadThemeBitmap(context, packageName, user, userId)
+            putCacheEntry(
+                key,
+                CacheEntry(
+                    result = bitmap?.let(CacheResult::Hit) ?: CacheResult.Miss,
+                    createdAt = SystemClock.elapsedRealtime(),
+                )
+            )
+            bitmap
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:resolve",
+                message = "桌面主题图标解析失败，将保留通知原始图标",
+                cause = exception,
+            )
+            null
+        }
     }
 
     fun clearCache() {
@@ -109,9 +115,16 @@ internal object ThemeIconProvider {
                 loadThemeDrawable(context, it, packageInfo.applicationInfo)
             }
             ?: return null
-        return runCatching { drawable.toIconBitmap(context) }
-            .onFailure { warnOnce("theme.icon.bitmap", "桌面主题图标位图生成失败，将回退原始通知图标", it) }
-            .getOrNull()
+        return try {
+            drawable.toIconBitmap(context)
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:bitmap",
+                message = "桌面主题图标位图生成失败，将保留通知原始图标",
+                cause = exception,
+            )
+            null
+        }
     }
 
     private fun loadThemeDrawable(
@@ -120,11 +133,16 @@ internal object ThemeIconProvider {
         applicationInfo: ApplicationInfo,
     ): Drawable? {
         val uxApi = uxIconApiOrNull() ?: return null
-        val uxIconManager = runCatching {
+        val uxIconManager = try {
             uxApi.constructor.newInstance(context.packageManager, context)
-        }.onFailure {
-            warnOnce("theme.icon.api.instance", "创建 Oplus 主题图标管理器失败", it)
-        }.getOrNull() ?: return null
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:api_instance",
+                message = "创建 Oplus 主题图标管理器失败",
+                cause = exception,
+            )
+            return null
+        }
 
         return uxApi.loadItemIcon?.invokeDrawable(uxIconManager, itemInfo, applicationInfo)
             ?: uxApi.loadItemIconWithoutEdit?.invokeDrawable(uxIconManager, itemInfo, applicationInfo)
@@ -134,11 +152,16 @@ internal object ThemeIconProvider {
         receiver: Any,
         itemInfo: PackageItemInfo,
         applicationInfo: ApplicationInfo,
-    ): Drawable? = runCatching {
-        invoke(receiver, itemInfo, applicationInfo, true) as? Drawable
-    }.onFailure {
-        warnOnce("theme.icon.invoke.$name", "调用 Oplus 主题图标接口失败：$name", it)
-    }.getOrNull()?.mutate()
+    ): Drawable? = try {
+        (invoke(receiver, itemInfo, applicationInfo, true) as? Drawable)?.mutate()
+    } catch (exception: Exception) {
+        diagnostics.runtimeFailure(
+            scope = "theme_icon:invoke:$name",
+            message = "调用 Oplus 主题图标接口失败：$name",
+            cause = exception,
+        )
+        null
+    }
 
     @Suppress("DEPRECATION")
     private fun PackageManager.resolvePackageInfo(
@@ -148,18 +171,25 @@ internal object ThemeIconProvider {
         userId: Int,
     ): ResolvedPackageInfo? {
         val launcherInfo = user?.let {
-            runCatching {
+            try {
                 context.getSystemService(LauncherApps::class.java)
                     ?.getActivityList(packageName, it)
                     ?.firstOrNull()
-            }.getOrNull()
+            } catch (exception: Exception) {
+                diagnostics.runtimeFailure(
+                    scope = "theme_icon:launcher_info",
+                    message = "读取 LauncherApps 图标入口失败，尝试应用信息",
+                    cause = exception,
+                )
+                null
+            }
         }
         val applicationInfo = launcherInfo?.applicationInfo
             ?: getApplicationInfoAsUserOrNull(packageName, userId)
-            ?: runCatching { getApplicationInfo(packageName, 0) }.getOrNull()
+            ?: getApplicationInfoOrNull(packageName)
             ?: return null
         val activityInfo = launcherInfo?.componentName
-            ?.let { getActivityInfoAsUserOrNull(it, userId) ?: runCatching { getActivityInfo(it, 0) }.getOrNull() }
+            ?.let { getActivityInfoAsUserOrNull(it, userId) ?: getActivityInfoOrNull(it) }
         return ResolvedPackageInfo(
             itemInfo = activityInfo ?: applicationInfo,
             applicationInfo = applicationInfo,
@@ -180,13 +210,41 @@ internal object ThemeIconProvider {
             args = arrayOf(componentName, 0, userId),
         ) as? ActivityInfo
 
+    @Suppress("DEPRECATION")
+    private fun PackageManager.getApplicationInfoOrNull(packageName: String): ApplicationInfo? = try {
+        getApplicationInfo(packageName, 0)
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
+    }
+
+    @Suppress("DEPRECATION")
+    private fun PackageManager.getActivityInfoOrNull(componentName: ComponentName): ActivityInfo? = try {
+        getActivityInfo(componentName, 0)
+    } catch (_: PackageManager.NameNotFoundException) {
+        null
+    }
+
     private fun PackageManager.invokePackageManagerMethod(
         methodName: String,
         parameterTypes: Array<Class<*>>,
         args: Array<Any>,
-    ): Any? = runCatching {
+    ): Any? = try {
         javaClass.getMethod(methodName, *parameterTypes).invoke(this, *args)
-    }.getOrNull()
+    } catch (exception: NoSuchMethodException) {
+        diagnostics.memberMissing(
+            scope = "theme_icon:package_manager:$methodName",
+            message = "PackageManager.$methodName 精确签名不存在，使用公开 API 回退",
+            cause = exception,
+        )
+        null
+    } catch (exception: Exception) {
+        diagnostics.runtimeFailure(
+            scope = "theme_icon:package_manager:$methodName",
+            message = "调用 PackageManager.$methodName 失败，使用公开 API 回退",
+            cause = exception,
+        )
+        null
+    }
 
     private fun uxIconApiOrNull(): UxIconApi? {
         if (apiResolved) return api
@@ -199,27 +257,76 @@ internal object ThemeIconProvider {
         return api
     }
 
-    private fun buildUxIconApi(): UxIconApi? = runCatching {
-        val clazz = Class.forName(UX_ICON_PACKAGE_MANAGER_EXT)
-        val constructor = clazz.getConstructor(PackageManager::class.java, Context::class.java)
-        UxIconApi(
-            constructor = constructor,
-            loadItemIcon = clazz.findUxIconMethod("loadItemIcon"),
-            loadItemIconWithoutEdit = clazz.findUxIconMethod("loadItemIconWithoutEdit"),
-        )
-    }.onFailure {
-        warnOnce("theme.icon.api", "未找到 Oplus 主题图标接口，将回退原始通知图标", it)
-    }.getOrNull()
+    @SuppressLint("PrivateApi") // ColorOS exposes this framework extension only to system code.
+    private fun buildUxIconApi(): UxIconApi? {
+        val clazz = try {
+            Class.forName(UX_ICON_PACKAGE_MANAGER_EXT)
+        } catch (exception: ClassNotFoundException) {
+            diagnostics.memberMissing(
+                scope = "theme_icon:api_class",
+                message = "未找到 Oplus 主题图标接口，将保留通知原始图标",
+                cause = exception,
+            )
+            return null
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:api_class",
+                message = "加载 Oplus 主题图标接口失败",
+                cause = exception,
+            )
+            return null
+        }
+        val constructor = try {
+            clazz.getConstructor(PackageManager::class.java, Context::class.java)
+        } catch (exception: NoSuchMethodException) {
+            diagnostics.memberMissing(
+                scope = "theme_icon:api_constructor",
+                message = "Oplus 主题图标接口构造函数签名不匹配",
+                cause = exception,
+            )
+            return null
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:api_constructor",
+                message = "读取 Oplus 主题图标接口构造函数失败",
+                cause = exception,
+            )
+            return null
+        }
+        val loadItemIcon: Method?
+        val loadItemIconWithoutEdit: Method?
+        try {
+            loadItemIcon = clazz.findUxIconMethod("loadItemIcon")
+            loadItemIconWithoutEdit = clazz.findUxIconMethod("loadItemIconWithoutEdit")
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:api_methods",
+                message = "读取 Oplus 主题图标加载方法失败",
+                cause = exception,
+            )
+            return null
+        }
+        if (loadItemIcon == null && loadItemIconWithoutEdit == null) {
+            diagnostics.memberMissing(
+                scope = "theme_icon:api_methods",
+                message = "Oplus 主题图标加载方法签名不匹配",
+            )
+            return null
+        }
+        return UxIconApi(constructor, loadItemIcon, loadItemIconWithoutEdit)
+    }
 
-    private fun Class<*>.findUxIconMethod(name: String): Method? =
-        runCatching {
-            getDeclaredMethod(
-                name,
-                PackageItemInfo::class.java,
-                ApplicationInfo::class.java,
-                Boolean::class.javaPrimitiveType!!,
-            ).apply { isAccessible = true }
-        }.getOrNull()
+    private fun Class<*>.findUxIconMethod(name: String): Method? = try {
+        getDeclaredMethod(
+            name,
+            PackageItemInfo::class.java,
+            ApplicationInfo::class.java,
+            Boolean::class.javaPrimitiveType!!,
+        ).takeIf { Drawable::class.java.isAssignableFrom(it.returnType) }
+            ?.apply { isAccessible = true }
+    } catch (_: NoSuchMethodException) {
+        null
+    }
 
     private fun Context.themeGeneration(): ThemeGeneration {
         val extraConfiguration = resources.configuration.oplusExtraConfigurationOrNull()
@@ -229,50 +336,137 @@ internal object ThemeIconProvider {
         )
     }
 
-    private fun Configuration.oplusExtraConfigurationOrNull(): Any? =
-        runCatching {
-            javaClass.methods
-                .firstOrNull { it.name == "getOplusExtraConfiguration" && it.parameterTypes.isEmpty() }
-                ?.invoke(this)
-        }.getOrNull()
-            ?: runCatching {
-                javaClass.getDeclaredField("mOplusExtraConfiguration").apply { isAccessible = true }.get(this)
-            }.getOrNull()
+    private fun Configuration.oplusExtraConfigurationOrNull(): Any? {
+        val accessor = try {
+            javaClass.getMethod("getOplusExtraConfiguration")
+        } catch (_: NoSuchMethodException) {
+            null
+        }
+        if (
+            accessor != null &&
+            !Modifier.isStatic(accessor.modifiers) &&
+            accessor.returnType != Void.TYPE
+        ) {
+            try {
+                return accessor.invoke(this)
+            } catch (exception: Exception) {
+                diagnostics.runtimeFailure(
+                    scope = "theme_icon:theme_generation",
+                    message = "读取 Oplus 主题代次失败，尝试字段回退",
+                    cause = exception,
+                )
+            }
+        } else if (accessor != null) {
+            diagnostics.memberMissing(
+                scope = "theme_icon:extra_configuration_accessor",
+                message = "Oplus 主题代次访问器不是预期的实例非 void 方法，尝试字段回退",
+            )
+        }
+        return try {
+            javaClass.getDeclaredField("mOplusExtraConfiguration")
+                .apply { isAccessible = true }
+                .get(this)
+        } catch (exception: NoSuchFieldException) {
+            diagnostics.memberMissing(
+                scope = "theme_icon:extra_configuration",
+                message = "未找到 Oplus 主题代次成员，使用短期缓存",
+                cause = exception,
+            )
+            null
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:extra_configuration",
+                message = "读取 Oplus 主题配置失败，使用短期缓存",
+                cause = exception,
+            )
+            null
+        }
+    }
 
-    private fun Any.longMember(fieldName: String, methodName: String): Long? =
-        runCatching {
-            javaClass.getDeclaredField(fieldName).apply { isAccessible = true }.get(this).toLongOrNull()
-        }.getOrNull()
-            ?: runCatching {
-                javaClass.methods
-                    .firstOrNull { it.name == methodName && it.parameterTypes.isEmpty() }
-                    ?.invoke(this)
-                    .toLongOrNull()
-            }.getOrNull()
+    private fun Any.longMember(fieldName: String, methodName: String): Long? {
+        try {
+            javaClass.getDeclaredField(fieldName)
+                .apply { isAccessible = true }
+                .get(this)
+                .toLongOrNull()
+                ?.let { return it }
+        } catch (_: NoSuchFieldException) {
+            // Try the known accessor below.
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:theme_generation:$fieldName",
+                message = "读取 Oplus 主题代次字段失败，尝试访问器",
+                cause = exception,
+            )
+        }
+        val accessor = try {
+            javaClass.getMethod(methodName)
+        } catch (_: NoSuchMethodException) {
+            null
+        }?.takeIf {
+            it.returnType == Long::class.javaPrimitiveType || Number::class.java.isAssignableFrom(it.returnType)
+        } ?: run {
+            diagnostics.memberMissing(
+                scope = "theme_icon:theme_generation:$fieldName",
+                message = "未找到 Oplus 主题代次成员，使用短期缓存",
+            )
+            return null
+        }
+        return try {
+            accessor.invoke(this).toLongOrNull()
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "theme_icon:theme_generation:$methodName",
+                message = "读取 Oplus 主题代次字段失败，使用短期缓存",
+                cause = exception,
+            )
+            null
+        }
+    }
 
     private fun Any?.toLongOrNull(): Long? = when (this) {
         is Number -> toLong()
         else -> null
     }
 
-    private fun UserHandle?.identifierOrDefault(): Int =
-        runCatching {
-            this?.javaClass?.getMethod("getIdentifier")?.invoke(this) as? Int
-        }.getOrNull() ?: 0
+    // UserHandle#getIdentifier is hidden from the public SDK used by this module.
+    @Suppress("DEPRECATION")
+    private val StatusBarNotification.publicUserId: Int
+        get() = userId
 
     private fun Drawable.toIconBitmap(context: Context): Bitmap {
-        val targetSize = context.resources.getDimensionPixelSize(android.R.dimen.app_icon_size).coerceAtLeast(1)
-        val renderSize = max(
-            targetSize,
-            max(intrinsicWidth.takeIf { it > 0 } ?: 0, intrinsicHeight.takeIf { it > 0 } ?: 0),
+        val requestedTargetSize = context.resources
+            .getDimensionPixelSize(android.R.dimen.app_icon_size)
+            .coerceAtLeast(1)
+        val requestedRenderSize = max(
+            requestedTargetSize,
+            max(intrinsicWidth.coerceAtLeast(0), intrinsicHeight.coerceAtLeast(0)),
         )
+        val renderSize = cappedSquareRenderSize(
+            targetSize = requestedTargetSize,
+            intrinsicWidth = intrinsicWidth,
+            intrinsicHeight = intrinsicHeight,
+            maxDimension = MAX_THEME_RENDER_DIMENSION,
+        )
+        if (requestedRenderSize > renderSize) {
+            diagnostics.report(
+                level = DiagnosticLevel.Warning,
+                event = DiagnosticEvent.IconRenderClamped,
+                message = "主题 Drawable 尺寸异常，已限制安全渲染范围",
+                attributes = mapOf(
+                    "limit" to MAX_THEME_RENDER_DIMENSION,
+                    "requested" to requestedRenderSize,
+                ),
+                occurrence = OccurrencePolicy.Once("theme_icon:render_size_capped"),
+            )
+        }
         val rendered = toBitmap(width = renderSize, height = renderSize, config = Bitmap.Config.ARGB_8888)
-        return rendered.trimTransparentPadding(targetSize)
+        return rendered.trimTransparentPadding(requestedTargetSize.coerceAtMost(MAX_THEME_RENDER_DIMENSION))
     }
 
     private fun Bitmap.trimTransparentPadding(targetSize: Int): Bitmap {
         val visibleBounds = visibleBoundsOrNull() ?: return scaleToTarget(targetSize)
-        val result = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
+        val result = createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
         val contentSize = (targetSize * ICON_CONTENT_RATIO).toInt().coerceIn(1, targetSize)
         val scale = minOf(
             contentSize.toFloat() / visibleBounds.width().toFloat(),
@@ -293,7 +487,7 @@ internal object ThemeIconProvider {
 
     private fun Bitmap.scaleToTarget(targetSize: Int): Bitmap {
         if (width == targetSize && height == targetSize) return this
-        val result = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
+        val result = createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
         Canvas(result).drawBitmap(
             this,
             null,
@@ -310,7 +504,7 @@ internal object ThemeIconProvider {
         var bottom = -1
         for (y in 0 until height) {
             for (x in 0 until width) {
-                if (Color.alpha(getPixel(x, y)) <= OPAQUE_ALPHA_THRESHOLD) continue
+                if (Color.alpha(this[x, y]) <= OPAQUE_ALPHA_THRESHOLD) continue
                 if (x < left) left = x
                 if (x > right) right = x
                 if (y < top) top = y
@@ -323,11 +517,6 @@ internal object ThemeIconProvider {
 
     private fun CacheEntry.isExpired(): Boolean =
         SystemClock.elapsedRealtime() - createdAt > CACHE_TTL_MS
-
-    private fun warnOnce(key: String, message: String, throwable: Throwable? = null) {
-        if (!onceLogs.add(key)) return
-        warningLogger?.invoke(key, message, throwable)
-    }
 
     private data class ResolvedPackageInfo(
         val itemInfo: PackageItemInfo,
@@ -361,5 +550,14 @@ internal object ThemeIconProvider {
     private sealed class CacheResult {
         data class Hit(val bitmap: Bitmap) : CacheResult()
         object Miss : CacheResult()
+    }
+
+    private companion object {
+        const val UX_ICON_PACKAGE_MANAGER_EXT = "android.app.UxIconPackageManagerExt"
+        const val ICON_CONTENT_RATIO = 1f
+        const val OPAQUE_ALPHA_THRESHOLD = 8
+        const val CACHE_TTL_MS = 10_000L
+        const val MAX_CACHE_SIZE_KIB = 4 * 1024
+        const val MAX_THEME_RENDER_DIMENSION = 512
     }
 }

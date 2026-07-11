@@ -6,8 +6,9 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
-      - '.github/**'
-      - '!.github/workflows/**'
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -16,36 +17,55 @@ jobs:
     env:
       APK_OUTPUT_PATH: 'app/build/outputs/apk'
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Prepare GitHub Env
-        run: |
-          GITHUB_SHA=${{ github.sha }}
-          GITHUB_CI_COMMIT_ID=${GITHUB_SHA:0:7}
-          echo "GITHUB_CI_COMMIT_ID=$GITHUB_CI_COMMIT_ID" >> $GITHUB_ENV
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Prepare Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           java-version: 21
           java-package: jdk
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Build with Gradle
+      - name: Test, lint and build
         run: |
-          ./gradlew :app:assembleDebug :app:assembleRelease
-          echo "DEBUG_APK_PATH=$(find ${{ env.APK_OUTPUT_PATH }}/debug -name '*.apk')" >> $GITHUB_ENV
-          echo "RELEASE_APK_PATH=$(find ${{ env.APK_OUTPUT_PATH }}/release -name '*.apk')" >> $GITHUB_ENV
+          ./gradlew :app:testDebugUnitTest :app:lintRelease :app:assembleDebug :app:assembleRelease
+
+      - name: Name snapshot artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_name=$(sed -nE 's/^project\.app\.versionName="?([^"[:space:]]+)"?$/\1/p' gradle.properties)
+          short_sha=${GITHUB_SHA:0:7}
+          debug_source=$(find "${APK_OUTPUT_PATH}/debug" -maxdepth 1 -type f -name '*.apk' -print -quit)
+          snapshot_source=$(find "${APK_OUTPUT_PATH}/release" -maxdepth 1 -type f -name '*.apk' -print -quit)
+          test -n "$version_name"
+          test -n "$debug_source"
+          test -n "$snapshot_source"
+          debug_target="${RUNNER_TEMP}/ColorOSNotifyIcon-${version_name}-debug-${short_sha}.apk"
+          snapshot_target="${RUNNER_TEMP}/ColorOSNotifyIcon-${version_name}-snapshot-${short_sha}.apk"
+          install -m 0644 "$debug_source" "$debug_target"
+          install -m 0644 "$snapshot_source" "$snapshot_target"
+          echo "DEBUG_APK_PATH=$debug_target" >> "$GITHUB_ENV"
+          echo "SNAPSHOT_APK_PATH=$snapshot_target" >> "$GITHUB_ENV"
 
       - name: Upload Artifacts (Debug)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           path: ${{ env.DEBUG_APK_PATH }}
           name: ColorOSNotifyIcon-debug-${{ github.sha }}
+          if-no-files-found: error
 
-      - name: Upload Artifacts (Release)
-        uses: actions/upload-artifact@v4
+      - name: Upload Artifacts (Snapshot)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: ${{ env.RELEASE_APK_PATH }}
-          name: ColorOSNotifyIcon-release-${{ github.sha }}
+          path: ${{ env.SNAPSHOT_APK_PATH }}
+          name: ColorOSNotifyIcon-snapshot-${{ github.sha }}
+          if-no-files-found: error
+
+      - name: Upload Snapshot Mapping
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          path: app/build/outputs/mapping/release/mapping.txt
+          name: ColorOSNotifyIcon-snapshot-mapping-${{ github.sha }}
+          if-no-files-found: error

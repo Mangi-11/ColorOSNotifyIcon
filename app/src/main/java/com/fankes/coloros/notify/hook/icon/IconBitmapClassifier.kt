@@ -8,83 +8,136 @@ import android.graphics.PorterDuff
 import android.graphics.drawable.AnimationDrawable
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.VectorDrawable
 import android.util.LruCache
+import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.toBitmap
 import kotlin.math.abs
 
 /**
- * 从 AOSP 拆出的灰度位图判定逻辑，用于替代 ColorOS 16 上不稳定的彩色图标判断。
+ * 判断图标是否可作为单色遮罩统一着色。
+ *
+ * Android 通知图标的可见颜色并不要求是灰色；应用可以用任意单一色相绘制 vector，
+ * SystemUI 最终只使用它的轮廓与透明度。这里保留 AOSP 灰度图标的兼容性，同时也接受
+ * 单一非灰色颜色，避免把合法的粉色、蓝色等通知图标误判为多彩图标。
  */
-object IconBitmapClassifier {
+internal object IconBitmapClassifier {
 
     private const val MAX_CACHE_ENTRIES = 256
 
     private val lock = Any()
-    private val cachedBitmapGrayscales = LruCache<Int, Boolean>(MAX_CACHE_ENTRIES)
+    private val cachedBitmapMonochromes = LruCache<Int, Boolean>(MAX_CACHE_ENTRIES)
     private var tempBuffer = intArrayOf(0)
     private var tempCompactBitmap: Bitmap? = null
     private var tempCompactBitmapCanvas: Canvas? = null
     private var tempCompactBitmapPaint: Paint? = null
     private val tempMatrix = Matrix()
 
-    private inline fun safeFalse(block: () -> Boolean) = try {
-        block()
-    } catch (_: Exception) {
-        false
+    fun isMonochromeDrawable(drawable: Drawable): Boolean = when (drawable) {
+        is BitmapDrawable -> isMonochromeBitmap(drawable.bitmap)
+        is AnimationDrawable -> drawable.numberOfFrames > 0 && isMonochromeRendered(drawable.getFrame(0))
+        else -> isMonochromeRendered(drawable)
     }
 
-    fun isGrayscaleDrawable(drawable: Drawable) = safeFalse {
-        when (drawable) {
-            is BitmapDrawable -> isGrayscaleBitmap(drawable.bitmap)
-            is AnimationDrawable -> drawable.numberOfFrames > 0 && isGrayscaleBitmap(drawable.getFrame(0).toBitmap())
-            is VectorDrawable -> true
-            else -> isGrayscaleBitmap(drawable.toBitmap())
-        }
+    private fun isMonochromeRendered(drawable: Drawable): Boolean {
+        val size = fitWithinRenderBounds(
+            intrinsicWidth = drawable.intrinsicWidth,
+            intrinsicHeight = drawable.intrinsicHeight,
+            maxDimension = MAX_RENDER_DIMENSION,
+        )
+        return isMonochromeBitmap(
+            drawable.toBitmap(
+                width = size.width,
+                height = size.height,
+                config = Bitmap.Config.ARGB_8888,
+            )
+        )
     }
 
-    private fun isGrayscaleBitmap(bitmap: Bitmap): Boolean = synchronized(lock) {
-        cachedBitmapGrayscales.get(bitmap.generationId) ?: run {
+    private fun isMonochromeBitmap(bitmap: Bitmap): Boolean = synchronized(lock) {
+        cachedBitmapMonochromes.get(bitmap.generationId) ?: run {
             var height = bitmap.height
             var width = bitmap.width
             var pixelSource: Bitmap = bitmap
-            if (height > 64 || width > 64) {
+            if (height > MAX_RENDER_DIMENSION || width > MAX_RENDER_DIMENSION) {
                 if (tempCompactBitmap == null) {
-                    tempCompactBitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                    tempCompactBitmap = createBitmap(
+                        MAX_RENDER_DIMENSION,
+                        MAX_RENDER_DIMENSION,
+                        Bitmap.Config.ARGB_8888,
+                    )
                         .also { tempCompactBitmapCanvas = Canvas(it) }
                     tempCompactBitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG).apply { isFilterBitmap = true }
                 }
+                val compactSize = fitWithinRenderBounds(width, height, MAX_RENDER_DIMENSION)
                 tempMatrix.reset()
-                tempMatrix.setScale(64f / width, 64f / height, 0f, 0f)
+                tempMatrix.setScale(
+                    compactSize.width.toFloat() / width,
+                    compactSize.height.toFloat() / height,
+                    0f,
+                    0f,
+                )
                 tempCompactBitmapCanvas?.drawColor(0, PorterDuff.Mode.SRC)
                 tempCompactBitmapCanvas?.drawBitmap(bitmap, tempMatrix, tempCompactBitmapPaint)
-                height = 64
-                width = 64
+                height = compactSize.height
+                width = compactSize.width
                 pixelSource = tempCompactBitmap ?: bitmap
             }
             val size = height * width
             ensureBufferSize(size)
             pixelSource.getPixels(tempBuffer, 0, width, 0, 0, width, height)
-            for (index in 0 until size) {
-                if (!isGrayscaleColor(tempBuffer[index])) {
-                    cachedBitmapGrayscales.put(bitmap.generationId, false)
-                    return@run false
-                }
+            isMonochromePixelBuffer(tempBuffer, size).also { result ->
+                cachedBitmapMonochromes.put(bitmap.generationId, result)
             }
-            cachedBitmapGrayscales.put(bitmap.generationId, true)
-            true
         }
-    }
-
-    private fun isGrayscaleColor(color: Int): Boolean {
-        if (color shr 24 and 255 < 50) return true
-        val red = color shr 16 and 255
-        val green = color shr 8 and 255
-        val blue = color and 255
-        return abs(red - green) < 20 && abs(red - blue) < 20 && abs(green - blue) < 20
     }
 
     private fun ensureBufferSize(size: Int) {
         if (tempBuffer.size < size) tempBuffer = IntArray(size)
     }
+
+    private const val MAX_RENDER_DIMENSION = 64
 }
+
+internal fun isMonochromePixelBuffer(
+    pixels: IntArray,
+    size: Int = pixels.size,
+): Boolean {
+    require(size in 0..pixels.size) { "size must be within the pixel buffer" }
+    var referenceColor: Int? = null
+    for (index in 0 until size) {
+        val color = pixels[index]
+        if (color.alpha < MIN_VISIBLE_ALPHA || color.isNeutral) continue
+        val reference = referenceColor
+        if (reference == null) {
+            referenceColor = color
+        } else if (!color.isNear(reference)) {
+            return false
+        }
+    }
+    if (referenceColor == null) return true
+
+    // A chromatic icon remains monochrome only when every visible pixel belongs to that
+    // color. An opaque gray/black detail alongside it is a genuine second color.
+    return (0 until size).none { index ->
+        val color = pixels[index]
+        color.alpha >= MIN_VISIBLE_ALPHA && color.isNeutral
+    }
+}
+
+private val Int.alpha: Int get() = this ushr 24 and 0xFF
+private val Int.red: Int get() = this ushr 16 and 0xFF
+private val Int.green: Int get() = this ushr 8 and 0xFF
+private val Int.blue: Int get() = this and 0xFF
+
+private val Int.isNeutral: Boolean
+    get() = abs(red - green) < CHANNEL_TOLERANCE &&
+        abs(red - blue) < CHANNEL_TOLERANCE &&
+        abs(green - blue) < CHANNEL_TOLERANCE
+
+private fun Int.isNear(other: Int): Boolean =
+    abs(red - other.red) < CHANNEL_TOLERANCE &&
+        abs(green - other.green) < CHANNEL_TOLERANCE &&
+        abs(blue - other.blue) < CHANNEL_TOLERANCE
+
+private const val MIN_VISIBLE_ALPHA = 50
+private const val CHANNEL_TOLERANCE = 20

@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">ColorOS 通知图标增强</string>
+    <string name="app_description">为 ColorOS 状态栏与通知中心提供更准确的单色通知图标</string>
     <string name="home_title">ColorOS 通知图标增强</string>
     <string name="section_module_status">当前状态</string>
     <string name="section_feature_settings">功能设置</string>
@@ -11,19 +12,17 @@
     <string name="label_rules_snapshot_synced">%1$d 条 · 最后同步 %2$s</string>
     <string name="label_rules_snapshot_never">%1$d 条 · 从未同步</string>
     <string name="button_sync_rules">同步规则</string>
-    <string name="button_syncing_rules">同步中...</string>
-    <string name="button_mirroring_rules">镜像中...</string>
+    <string name="button_syncing_rules">同步中…</string>
+    <string name="button_mirroring_rules">镜像中…</string>
     <string name="label_sync_summary">从远程更新规则数据</string>
     <string name="rules_title">通知图标优化名单</string>
     <string name="rules_search_hint">搜索应用或包名</string>
     <string name="label_rules_count_summary">规则概览</string>
     <string name="rules_count_summary">共 %1$d 条，已启用 %2$d 条，全部替换 %3$d 条</string>
-    <string name="label_rules_enabled">启用规则替换</string>
-    <string name="label_rules_enabled_summary">按当前列表修复状态栏与通知中心图标</string>
     <string name="label_icon_enhancement_enabled">启用图标增强</string>
     <string name="label_icon_enhancement_enabled_summary">按当前图标来源修复状态栏与通知中心图标</string>
     <string name="label_icon_source_mode">图标来源</string>
-    <string name="label_icon_source_mode_summary">规则图标与桌面主题互斥，切换后刷新 SystemUI 生效</string>
+    <string name="label_icon_source_mode_summary">规则图标与桌面主题图标互斥，切换后自动应用</string>
     <string name="label_icon_source_rule_library">规则图标</string>
     <string name="label_icon_source_rule_library_summary">使用模块规则库图标，保留规则列表的细粒度控制</string>
     <string name="label_icon_source_desktop_theme">桌面主题</string>
@@ -42,6 +41,8 @@
     <string name="label_rule_force_all_summary">忽略应用原生单色图标，始终使用规则图标</string>
     <string name="label_rule_contributor">贡献者：%1$s</string>
     <string name="rules_empty">暂无规则，请先同步远程规则</string>
+    <string name="rules_loading">正在加载规则…</string>
+    <string name="rules_load_failed">规则读取失败，请重新同步</string>
     <string name="rules_search_empty">没有匹配的规则</string>
     <string name="status_hero_active_title">已激活</string>
     <string name="status_hero_missing_scopes_title">作用域不完整</string>
@@ -51,17 +52,20 @@
     <string name="status_hero_missing_scopes_detail">缺少作用域：%1$s</string>
     <string name="status_hero_inactive_detail">等待 LSPosed 连接模块服务</string>
     <string name="label_restart_systemui">重启 SystemUI</string>
-    <string name="label_restart_summary">手动重启以应用当前配置</string>
+    <string name="label_restart_summary">仅在配置未自动生效时手动重启</string>
     <string name="dialog_restart_title">重启 SystemUI</string>
     <string name="dialog_restart_message">将立即重启系统界面以使配置生效。此操作会导致屏幕短暂黑屏，是否继续？</string>
     <string name="dialog_cancel">取消</string>
     <string name="dialog_confirm_restart">确认重启</string>
-    <string name="message_rules_sync_success_remote">规则同步完成，共 %1$d 条；已镜像到框架并通知 SystemUI 刷新</string>
+    <string name="message_rules_sync_success_remote">规则同步完成，共 %1$d 条；已发布到框架</string>
     <string name="message_rules_sync_mirror_failed">规则下载完成，共 %1$d 条，但发布到框架失败：%2$s</string>
+    <string name="message_rules_sync_local_only">规则下载完成，共 %1$d 条；框架已断开，稍后修改设置时会重新发布</string>
     <string name="message_rules_sync_failed">规则同步失败：%1$s</string>
+    <string name="message_rules_sync_failed_generic">未知错误</string>
     <string name="message_config_mirror_failed">设置未发布到框架：%1$s</string>
     <string name="message_framework_unavailable">未连接 LSPosed 服务，未修改生效配置</string>
     <string name="message_config_not_synced">配置尚未同步到框架：%1$s</string>
     <string name="message_restart_requested">已请求重启 SystemUI</string>
     <string name="message_restart_failed">重启失败：%1$s</string>
+    <string name="message_restart_failed_generic">无法执行 SystemUI 重启命令</string>
 </resources>

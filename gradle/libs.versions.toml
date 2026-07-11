@@ -3,11 +3,11 @@ agp = "9.2.1"
 kotlin = "2.4.0"
 libxposed-api = "102.0.0"
 libxposed-service = "102.0.0"
-okhttp = "5.3.2"
+okhttp = "5.4.0"
 androidx-core-ktx = "1.19.0"
-compose-bom = "2026.05.01"
+compose-bom = "2026.06.01"
 activity-compose = "1.13.0"
-miuix = "0.9.2"
+miuix = "0.9.3"
 junit = "4.13.2"
 
 [plugins]
@@ -23,8 +23,6 @@ compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = 
 compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
-compose-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
 miuix-ui-android = { group = "top.yukonga.miuix.kmp", name = "miuix-ui-android", version.ref = "miuix" }
 miuix-icons-android = { group = "top.yukonga.miuix.kmp", name = "miuix-icons-android", version.ref = "miuix" }

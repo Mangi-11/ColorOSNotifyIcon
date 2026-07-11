@@ -9,9 +9,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.fankes.coloros.notify.R
-import com.fankes.coloros.notify.framework.LsposedServiceBridge
+import com.fankes.coloros.notify.framework.XposedServiceBridge
+import com.fankes.coloros.notify.framework.RemoteConfigCoordinator
 import com.fankes.coloros.notify.framework.RemoteRuleMirror
-import com.fankes.coloros.notify.framework.SystemUiRefreshSignal
 import com.fankes.coloros.notify.framework.SystemUiRestarter
 import com.fankes.coloros.notify.rules.RuleRepository
 import com.fankes.coloros.notify.rules.RuleStore
@@ -24,17 +24,15 @@ class HomeActivity : ComponentActivity() {
     private var uiState by mutableStateOf(HomeScreenState())
     private var currentService: XposedService? = null
 
-    private val frameworkListener = object : LsposedServiceBridge.Listener {
+    private val frameworkListener = object : XposedServiceBridge.Listener {
         override fun onServiceChanged(service: XposedService?) {
-            runOnUiThread {
-                refreshLocalState(currentService = service)
-            }
+            refreshLocalState(currentService = service)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        refreshLocalState(currentService = LsposedServiceBridge.getCurrentService())
+        refreshLocalState(currentService = XposedServiceBridge.getCurrentService())
 
         enableEdgeToEdge()
         setContent {
@@ -59,9 +57,17 @@ class HomeActivity : ComponentActivity() {
     }
 
     private fun refreshLocalState(currentService: XposedService? = this.currentService) {
-        this.currentService = currentService
+        val serviceSnapshot = XposedServiceBridge.snapshot(currentService)
+        this.currentService = currentService.takeIf { serviceSnapshot != null }
         uiState = uiState.copy(
-            frameworkConnection = currentService?.toFrameworkConnection(),
+            frameworkConnection = serviceSnapshot?.let {
+                FrameworkConnection(
+                    name = it.frameworkName,
+                    version = it.frameworkVersion,
+                    apiVersion = it.apiVersion,
+                    grantedScopes = it.scopes,
+                )
+            },
             rulesCount = RuleStore.rulesCount,
             rulesUpdatedAt = RuleStore.rulesUpdatedAt,
             config = RuleStore.moduleConfig,
@@ -70,123 +76,87 @@ class HomeActivity : ComponentActivity() {
 
     private fun setRulesEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
         val service = requireFrameworkService(onShowMessage) ?: return
-        val previous = RuleStore.moduleConfig.rulesEnabled
-        RuleStore.setRulesEnabled(enabled)
-        onConfigChanged(service, onShowMessage) {
-            RuleStore.setRulesEnabled(previous)
-        }
+        updateConfig(service, onShowMessage) { RuleStore.setRulesEnabled(enabled) }
     }
 
     private fun setIconSourceMode(mode: RuleStore.IconSourceMode, onShowMessage: (String) -> Unit) {
         val service = requireFrameworkService(onShowMessage) ?: return
-        val previous = RuleStore.moduleConfig.iconSourceMode
-        RuleStore.setIconSourceMode(mode)
-        onConfigChanged(service, onShowMessage) {
-            RuleStore.setIconSourceMode(previous)
-        }
+        updateConfig(service, onShowMessage) { RuleStore.setIconSourceMode(mode) }
     }
 
     private fun setPanelIconReplacementEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
         val service = requireFrameworkService(onShowMessage) ?: return
-        val previous = RuleStore.moduleConfig.panelIconReplacementEnabled
-        RuleStore.setPanelIconReplacementEnabled(enabled)
-        onConfigChanged(service, onShowMessage) {
-            RuleStore.setPanelIconReplacementEnabled(previous)
-        }
+        updateConfig(service, onShowMessage) { RuleStore.setPanelIconReplacementEnabled(enabled) }
     }
 
     private fun setOplusPushSpecialHandlingEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
         val service = requireFrameworkService(onShowMessage) ?: return
-        val previous = RuleStore.moduleConfig.oplusPushSpecialHandlingEnabled
-        RuleStore.setOplusPushSpecialHandlingEnabled(enabled)
-        onConfigChanged(service, onShowMessage) {
-            RuleStore.setOplusPushSpecialHandlingEnabled(previous)
-        }
+        updateConfig(service, onShowMessage) { RuleStore.setOplusPushSpecialHandlingEnabled(enabled) }
     }
 
     private fun setPlaceholderIconEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {
         val service = requireFrameworkService(onShowMessage) ?: return
-        val previous = RuleStore.moduleConfig.placeholderIconEnabled
-        RuleStore.setPlaceholderIconEnabled(enabled)
-        onConfigChanged(service, onShowMessage) {
-            RuleStore.setPlaceholderIconEnabled(previous)
-        }
+        updateConfig(service, onShowMessage) { RuleStore.setPlaceholderIconEnabled(enabled) }
     }
 
-    private fun onConfigChanged(
+    private fun updateConfig(
         service: XposedService,
         onShowMessage: (String) -> Unit,
-        rollback: () -> Unit,
+        mutation: () -> Unit,
     ) {
-        refreshLocalState()
-        mirrorToRemoteStore(service) { result ->
-            result.onFailure {
-                rollback()
-                refreshLocalState()
+        val updated = RemoteConfigCoordinator.update(service, mutation) { result ->
+            if (result is RemoteRuleMirror.PublishResult.Failed) {
                 onShowMessage(
-                    getString(
-                        R.string.message_config_mirror_failed,
-                        it.message ?: it.javaClass.simpleName,
-                    )
+                    getString(R.string.message_config_mirror_failed, result.failure.userMessage)
                 )
             }
         }
+        if (updated) refreshLocalState()
     }
 
     private fun syncRules(onShowMessage: (String) -> Unit) {
-        val service = requireFrameworkService(onShowMessage) ?: return
-        val previousRulesJson = RuleStore.rulesJson
-        val previousRulesUpdatedAt = RuleStore.rulesUpdatedAt
+        requireFrameworkService(onShowMessage) ?: return
         uiState = uiState.copy(syncStage = RuleSyncStage.SyncingRules)
         RuleRepository.syncRules { result ->
             result.onSuccess { syncResult ->
                 refreshLocalState()
-                uiState = uiState.copy(syncStage = RuleSyncStage.MirroringRemote)
-                mirrorToRemoteStore(service) { mirrorResult ->
+                val service = currentService
+                if (service == null) {
                     uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
-                    val message = mirrorResult.fold(
-                        onSuccess = {
+                    onShowMessage(
+                        getString(R.string.message_rules_sync_local_only, syncResult.count)
+                    )
+                    return@onSuccess
+                }
+                uiState = uiState.copy(syncStage = RuleSyncStage.MirroringRemote)
+                RemoteConfigCoordinator.publish(service) { mirrorResult ->
+                    uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
+                    val message = when (mirrorResult) {
+                        is RemoteRuleMirror.PublishResult.Published ->
                             getString(
                                 R.string.message_rules_sync_success_remote,
                                 syncResult.count
                             )
-                        },
-                        onFailure = {
-                            RuleStore.updateRules(previousRulesJson, previousRulesUpdatedAt)
-                            refreshLocalState()
+
+                        is RemoteRuleMirror.PublishResult.Failed ->
                             getString(
                                 R.string.message_rules_sync_mirror_failed,
                                 syncResult.count,
-                                it.message ?: it.javaClass.simpleName
+                                mirrorResult.failure.userMessage,
                             )
-                        },
-                    )
+                    }
                     onShowMessage(message)
                 }
-            }.onFailure {
+            }.onFailure { exception ->
                 uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
                 onShowMessage(
                     getString(
                         R.string.message_rules_sync_failed,
-                        it.message ?: it.javaClass.simpleName
+                        (exception as? RuleRepository.SyncFailure)?.userMessage
+                            ?: getString(R.string.message_rules_sync_failed_generic)
                     )
                 )
             }
-        }
-    }
-
-    private fun mirrorToRemoteStore(
-        service: XposedService,
-        requestRefresh: Boolean = true,
-        onResult: ((Result<RemoteRuleMirror.SyncResult>) -> Unit)? = null,
-    ) {
-        RemoteRuleMirror.syncAsync(service) { result ->
-            if (requestRefresh) {
-                result.onSuccess {
-                    SystemUiRefreshSignal.request(this)
-                }
-            }
-            onResult?.invoke(result)
         }
     }
 
@@ -196,15 +166,11 @@ class HomeActivity : ComponentActivity() {
             onShowMessage(getString(R.string.message_framework_unavailable))
             return
         }
-        mirrorToRemoteStore(service, requestRefresh = false) { mirrorResult ->
-            mirrorResult.onSuccess {
-                restartSystemUiDirectly(onShowMessage)
-            }.onFailure {
-                onShowMessage(
-                    getString(
-                        R.string.message_config_not_synced,
-                        it.message ?: it.javaClass.simpleName
-                    )
+        RemoteConfigCoordinator.publish(service) { mirrorResult ->
+            when (mirrorResult) {
+                is RemoteRuleMirror.PublishResult.Published -> restartSystemUiDirectly(onShowMessage)
+                is RemoteRuleMirror.PublishResult.Failed -> onShowMessage(
+                    getString(R.string.message_config_not_synced, mirrorResult.failure.userMessage)
                 )
             }
         }
@@ -215,11 +181,10 @@ class HomeActivity : ComponentActivity() {
             result.onSuccess {
                 onShowMessage(getString(R.string.message_restart_requested))
             }.onFailure {
+                val userMessage = (it as? SystemUiRestarter.RestartFailure)?.userMessage
+                    ?: getString(R.string.message_restart_failed_generic)
                 onShowMessage(
-                    getString(
-                        R.string.message_restart_failed,
-                        it.message ?: it.javaClass.simpleName
-                    )
+                    getString(R.string.message_restart_failed, userMessage)
                 )
             }
         }
@@ -227,11 +192,11 @@ class HomeActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        LsposedServiceBridge.addListener(frameworkListener)
+        XposedServiceBridge.addListener(frameworkListener)
     }
 
     override fun onStop() {
-        LsposedServiceBridge.removeListener(frameworkListener)
+        XposedServiceBridge.removeListener(frameworkListener)
         super.onStop()
     }
 
@@ -243,10 +208,4 @@ class HomeActivity : ComponentActivity() {
         return service
     }
 
-    private fun XposedService.toFrameworkConnection() = FrameworkConnection(
-        name = frameworkName,
-        version = frameworkVersion,
-        apiVersion = apiVersion,
-        grantedScopes = scope.toSet(),
-    )
 }

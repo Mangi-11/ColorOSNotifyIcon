@@ -2,14 +2,22 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         google()
-        mavenCentral()
+        maven {
+            name = "GoogleMavenCentralMirror"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+            mavenContent { releasesOnly() }
+        }
     }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
-        mavenCentral()
+        maven {
+            name = "GoogleMavenCentralMirror"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+            mavenContent { releasesOnly() }
+        }
     }
 }
 plugins {
@@ -19,17 +27,8 @@ plugins {
 gropify {
     global {
         common {
-            includeKeys(
-                "GITHUB_CI_COMMIT_ID",
-                "^project\\..*\$".toRegex()
-            )
-            permanentKeyValues("GITHUB_CI_COMMIT_ID" to "")
-            locations(GropifyLocation.RootProject, GropifyLocation.SystemEnv)
-        }
-        android {
-            includeKeys("GITHUB_CI_COMMIT_ID")
-            // 手动指定类型，防止一些特殊 "COMMIT ID" 被生成为数值
-            keyValuesRules("GITHUB_CI_COMMIT_ID" to ValueRule(String::class))
+            includeKeys("^project\\..*\$".toRegex())
+            locations(GropifyLocation.RootProject)
         }
     }
     rootProject { common { isEnabled = false } }

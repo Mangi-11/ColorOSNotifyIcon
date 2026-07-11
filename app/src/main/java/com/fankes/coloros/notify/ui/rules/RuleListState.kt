@@ -9,6 +9,8 @@ data class RuleListState(
     val query: String = "",
     val config: RuleStore.ModuleConfig = RuleStore.ModuleConfig(),
     val canEditConfig: Boolean = false,
+    val isLoading: Boolean = true,
+    val loadFailed: Boolean = false,
 ) {
     val filteredRules: List<IconRule>
         get() {

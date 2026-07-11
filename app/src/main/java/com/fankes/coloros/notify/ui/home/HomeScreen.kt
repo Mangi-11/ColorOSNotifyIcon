@@ -1,6 +1,8 @@
 package com.fankes.coloros.notify.ui.home
 
+import android.annotation.SuppressLint
 import android.content.res.Configuration
+import android.os.Build
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,8 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +39,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.fankes.coloros.notify.BuildConfig
 import com.fankes.coloros.notify.R
+import com.fankes.coloros.notify.diagnostics.AppDiagnostics
+import com.fankes.coloros.notify.diagnostics.DiagnosticEvent
+import com.fankes.coloros.notify.diagnostics.DiagnosticLevel
+import com.fankes.coloros.notify.diagnostics.OccurrencePolicy
 import com.fankes.coloros.notify.rules.RuleStore
 import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
 import kotlinx.coroutines.launch
@@ -51,6 +55,8 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.SnackbarHost
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -578,15 +584,29 @@ private data class StatusHeroSpec(
     val showCheckRing: Boolean,
 )
 
-private fun softwareVersionText(): String {
-    val softwareVersion = systemProperty(SOFTWARE_VERSION_PROPERTY).trim()
-    return softwareVersion
-}
+private fun softwareVersionText(): String = cachedSoftwareVersion
 
-private fun systemProperty(name: String): String =
-    Class.forName("android.os.SystemProperties")
+private val cachedSoftwareVersion: String by lazy(::readSoftwareVersion)
+
+@SuppressLint("PrivateApi") // ColorOS-only display property; Build.DISPLAY is the safe fallback.
+private fun readSoftwareVersion(): String = try {
+    (Class.forName("android.os.SystemProperties")
         .getMethod("get", String::class.java)
-        .invoke(null, name) as String
+        .invoke(null, SOFTWARE_VERSION_PROPERTY) as? String)
+        ?.trim()
+        .orEmpty()
+        .ifBlank { Build.DISPLAY.orEmpty() }
+} catch (exception: Exception) {
+    AppDiagnostics.logger.report(
+        level = DiagnosticLevel.Warning,
+        event = DiagnosticEvent.SystemInfoReadFailed,
+        message = "Unable to read the ColorOS software version property",
+        cause = exception,
+        attributes = mapOf("scope" to "software_version"),
+        occurrence = OccurrencePolicy.Once("software_version"),
+    )
+    Build.DISPLAY.orEmpty()
+}
 
 private object StatusHeroDefaults {
     val OutsidePadding = 12.dp

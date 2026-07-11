@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +33,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.fankes.coloros.notify.R
+import com.fankes.coloros.notify.diagnostics.AppDiagnostics
+import com.fankes.coloros.notify.diagnostics.DiagnosticEvent
+import com.fankes.coloros.notify.diagnostics.DiagnosticLevel
+import com.fankes.coloros.notify.diagnostics.OccurrencePolicy
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
 import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
@@ -49,6 +51,8 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SearchBar
 import top.yukonga.miuix.kmp.basic.SearchBarDefaults
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.SnackbarHost
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -128,12 +132,18 @@ fun RuleListScreen(
                     },
                 ) {}
             }
-            item {
-                RuleSummaryCard(state = state)
+            if (!state.isLoading) {
+                item { RuleSummaryCard(state = state) }
             }
             item { SmallTitle(text = stringResource(R.string.section_rule_management)) }
             if (rules.isEmpty()) {
-                item { EmptyRulesCard(query = state.query) }
+                item {
+                    EmptyRulesCard(
+                        query = state.query,
+                        isLoading = state.isLoading,
+                        loadFailed = state.loadFailed,
+                    )
+                }
             } else {
                 items(
                     items = rules,
@@ -261,6 +271,24 @@ private fun RuleIcon(rule: IconRule) {
     } else {
         MiuixTheme.colorScheme.onSurfaceVariantSummary
     }
+    val imageBitmap = remember(rule.iconAsset) {
+        try {
+            rule.iconBitmap.asImageBitmap()
+        } catch (exception: Exception) {
+            AppDiagnostics.logger.report(
+                level = DiagnosticLevel.Error,
+                event = DiagnosticEvent.IconDecodeFailed,
+                message = "Unable to decode rule icon",
+                cause = exception,
+                attributes = mapOf(
+                    "scope" to "rule_list",
+                    "package" to rule.packageName,
+                ),
+                occurrence = OccurrencePolicy.Once(rule.packageName),
+            )
+            null
+        }
+    }
     Box(
         modifier = Modifier
             .size(42.dp)
@@ -268,12 +296,14 @@ private fun RuleIcon(rule: IconRule) {
             .background(MiuixTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.Center,
     ) {
-        Image(
-            bitmap = rule.iconBitmap.asImageBitmap(),
-            contentDescription = null,
-            modifier = Modifier.size(24.dp),
-            colorFilter = ColorFilter.tint(tint),
-        )
+        imageBitmap?.let {
+            Image(
+                bitmap = it,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                colorFilter = ColorFilter.tint(tint),
+            )
+        }
     }
 }
 
@@ -300,7 +330,11 @@ private fun ToggleComponent(
 }
 
 @Composable
-private fun EmptyRulesCard(query: String) {
+private fun EmptyRulesCard(
+    query: String,
+    isLoading: Boolean,
+    loadFailed: Boolean,
+) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -314,10 +348,11 @@ private fun EmptyRulesCard(query: String) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (query.isBlank()) {
-                    stringResource(R.string.rules_empty)
-                } else {
-                    stringResource(R.string.rules_search_empty)
+                text = when {
+                    isLoading -> stringResource(R.string.rules_loading)
+                    loadFailed -> stringResource(R.string.rules_load_failed)
+                    query.isBlank() -> stringResource(R.string.rules_empty)
+                    else -> stringResource(R.string.rules_search_empty)
                 },
                 style = MiuixTheme.textStyles.body1,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
