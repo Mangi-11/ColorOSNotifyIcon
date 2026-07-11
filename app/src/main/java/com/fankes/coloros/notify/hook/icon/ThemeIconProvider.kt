@@ -57,18 +57,26 @@ internal class ThemeIconProvider(
             val user = sbn.user
             val userId = sbn.publicUserId
             val themeGeneration = context.themeGeneration()
+            val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
             val key = CacheKey(
                 packageName = packageName,
                 userId = userId,
-                uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK,
+                uiMode = uiMode,
                 themeChanged = themeGeneration.changed,
                 themeChangedFlags = themeGeneration.flags,
+                uxIconConfig = themeGeneration.uxIconConfig,
             )
             cachedEntry(key)?.takeIf { !it.isExpired() }?.let { entry ->
                 return (entry.result as? CacheResult.Hit)?.bitmap
             }
 
-            val bitmap = loadThemeBitmap(context, packageName, user, userId)
+            val bitmap = loadThemeBitmap(context, packageName, user, userId)?.let {
+                if (ThemeIconDarkEffect.isEnabled(uiMode, themeGeneration.uxIconConfig)) {
+                    ThemeIconDarkEffect.apply(it)
+                } else {
+                    it
+                }
+            }
             putCacheEntry(
                 key,
                 CacheEntry(
@@ -333,6 +341,7 @@ internal class ThemeIconProvider(
         return ThemeGeneration(
             changed = extraConfiguration?.longMember("mThemeChanged", "getThemeChanged") ?: 0L,
             flags = extraConfiguration?.longMember("mThemeChangedFlags", "getThemeChangedFlags") ?: 0L,
+            uxIconConfig = extraConfiguration?.longMember("mUxIconConfig", "getUxIconConfig") ?: -1L,
         )
     }
 
@@ -535,11 +544,13 @@ internal class ThemeIconProvider(
         val uiMode: Int,
         val themeChanged: Long,
         val themeChangedFlags: Long,
+        val uxIconConfig: Long,
     )
 
     private data class ThemeGeneration(
         val changed: Long,
         val flags: Long,
+        val uxIconConfig: Long,
     )
 
     private data class CacheEntry(
