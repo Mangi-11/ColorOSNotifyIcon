@@ -53,13 +53,13 @@ import top.yukonga.miuix.kmp.basic.SearchBarDefaults
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -69,6 +69,7 @@ fun RuleListScreen(
     onQueryChange: (String) -> Unit,
     onRuleEnabledChange: (IconRule, Boolean, (String) -> Unit) -> Unit,
     onRuleEnabledAllChange: (IconRule, Boolean, (String) -> Unit) -> Unit,
+    onInstalledRulesEnabledAllChange: (Boolean, (String) -> Unit) -> Unit,
 ) {
     var searchExpanded by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -98,7 +99,7 @@ fun RuleListScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { paddingValues ->
-        val rules = state.filteredRules
+        val sections = state.sections
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -132,11 +133,8 @@ fun RuleListScreen(
                     },
                 ) {}
             }
-            if (!state.isLoading) {
-                item { RuleSummaryCard(state = state) }
-            }
-            item { SmallTitle(text = stringResource(R.string.section_rule_management)) }
-            if (rules.isEmpty()) {
+            if (sections.isEmpty()) {
+                item { SmallTitle(text = stringResource(R.string.section_rule_management)) }
                 item {
                     EmptyRulesCard(
                         query = state.query,
@@ -145,18 +143,37 @@ fun RuleListScreen(
                     )
                 }
             } else {
-                items(
-                    items = rules,
-                    key = { it.packageName },
-                ) { rule ->
-                    RuleCard(
-                        rule = rule,
-                        rulesEnabled = state.config.rulesEnabled,
-                        ruleLibraryMode = state.config.iconSourceMode == RuleStore.IconSourceMode.RuleLibrary,
-                        canEditConfig = state.canEditConfig,
-                        onEnabledChange = { onRuleEnabledChange(rule, it, ::showSnackbar) },
-                        onEnabledAllChange = { onRuleEnabledAllChange(rule, it, ::showSnackbar) },
-                    )
+                sections.forEach { section ->
+                    item(key = "section:${section.type}") {
+                        RuleSectionTitle(section)
+                    }
+                    if (section.type == RuleSectionType.Installed && state.query.isBlank()) {
+                        item(key = "installed:enabled_all") {
+                            InstalledRulesEnabledAllCard(
+                                checked = state.installedRulesEnabledAll,
+                                enabled = state.canEditConfig &&
+                                    state.config.rulesEnabled &&
+                                    state.config.iconSourceMode == RuleStore.IconSourceMode.RuleLibrary &&
+                                    state.installedEnabledRulePackageNames.isNotEmpty(),
+                                onCheckedChange = {
+                                    onInstalledRulesEnabledAllChange(it, ::showSnackbar)
+                                },
+                            )
+                        }
+                    }
+                    items(
+                        items = section.rules,
+                        key = { it.packageName },
+                    ) { rule ->
+                        RuleCard(
+                            rule = rule,
+                            rulesEnabled = state.config.rulesEnabled,
+                            ruleLibraryMode = state.config.iconSourceMode == RuleStore.IconSourceMode.RuleLibrary,
+                            canEditConfig = state.canEditConfig,
+                            onEnabledChange = { onRuleEnabledChange(rule, it, ::showSnackbar) },
+                            onEnabledAllChange = { onRuleEnabledAllChange(rule, it, ::showSnackbar) },
+                        )
+                    }
                 }
             }
             item { Spacer(modifier = Modifier.height(24.dp)) }
@@ -165,25 +182,34 @@ fun RuleListScreen(
 }
 
 @Composable
-private fun RuleSummaryCard(
-    state: RuleListState,
+private fun InstalledRulesEnabledAllCard(
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
+            .padding(bottom = 10.dp),
         insideMargin = PaddingValues(0.dp),
     ) {
-        BasicComponent(
-            title = stringResource(R.string.label_rules_count_summary),
-            summary = stringResource(
-                R.string.rules_count_summary,
-                state.rules.size,
-                state.enabledRulesCount,
-                state.forceAllRulesCount,
-            ),
+        SwitchPreference(
+            title = stringResource(R.string.label_installed_rules_enabled_all),
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled,
         )
     }
+}
+
+@Composable
+private fun RuleSectionTitle(section: RuleSection) {
+    val text = when (section.type) {
+        RuleSectionType.All -> stringResource(R.string.section_rule_management)
+        RuleSectionType.Installed -> stringResource(R.string.rules_group_installed, section.rules.size)
+        RuleSectionType.NotInstalled -> stringResource(R.string.rules_group_not_installed, section.rules.size)
+    }
+    SmallTitle(text = text)
 }
 
 @Composable
@@ -195,8 +221,6 @@ private fun RuleCard(
     onEnabledChange: (Boolean) -> Unit,
     onEnabledAllChange: (Boolean) -> Unit,
 ) {
-    val unavailableSummary = stringResource(R.string.label_framework_waiting_summary)
-    val ruleModeRequiredSummary = stringResource(R.string.label_rule_library_mode_required_summary)
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -215,48 +239,27 @@ private fun RuleCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = rule.packageName,
+                text = buildString {
+                    append(rule.packageName)
+                    if (rule.contributorName.isNotBlank()) {
+                        append(" · ")
+                        append(rule.contributorName)
+                    }
+                },
                 style = MiuixTheme.textStyles.body2,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (rule.contributorName.isNotBlank()) {
-                Text(
-                    text = stringResource(R.string.label_rule_contributor, rule.contributorName),
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
         ToggleComponent(
             title = stringResource(R.string.label_rule_enable),
-            summary = if (canEditConfig) {
-                if (ruleLibraryMode) {
-                    stringResource(R.string.label_rule_enable_summary)
-                } else {
-                    ruleModeRequiredSummary
-                }
-            } else {
-                unavailableSummary
-            },
             checked = rule.isEnabled,
             enabled = canEditConfig && rulesEnabled && ruleLibraryMode,
             onCheckedChange = onEnabledChange,
         )
         ToggleComponent(
             title = stringResource(R.string.label_rule_force_all),
-            summary = if (canEditConfig) {
-                if (ruleLibraryMode) {
-                    stringResource(R.string.label_rule_force_all_summary)
-                } else {
-                    ruleModeRequiredSummary
-                }
-            } else {
-                unavailableSummary
-            },
             checked = rule.isEnabledAll,
             enabled = canEditConfig && rulesEnabled && ruleLibraryMode && rule.isEnabled,
             onCheckedChange = onEnabledAllChange,
@@ -310,21 +313,14 @@ private fun RuleIcon(rule: IconRule) {
 @Composable
 private fun ToggleComponent(
     title: String,
-    summary: String,
     checked: Boolean,
     enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    BasicComponent(
+    SwitchPreference(
         title = title,
-        summary = summary,
-        endActions = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                enabled = enabled,
-            )
-        },
+        checked = checked,
+        onCheckedChange = onCheckedChange,
         enabled = enabled,
     )
 }
@@ -371,6 +367,7 @@ private fun RuleListScreenPreview() {
             onQueryChange = {},
             onRuleEnabledChange = { _, _, _ -> },
             onRuleEnabledAllChange = { _, _, _ -> },
+            onInstalledRulesEnabledAllChange = { _, _ -> },
         )
     }
 }

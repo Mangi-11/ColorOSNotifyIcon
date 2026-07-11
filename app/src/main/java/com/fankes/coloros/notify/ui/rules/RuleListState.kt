@@ -6,6 +6,8 @@ import java.util.Locale
 
 data class RuleListState(
     val rules: List<IconRule> = emptyList(),
+    val installedPackageNames: Set<String> = emptySet(),
+    val installedPackagesKnown: Boolean = false,
     val query: String = "",
     val config: RuleStore.ModuleConfig = RuleStore.ModuleConfig(),
     val canEditConfig: Boolean = false,
@@ -22,9 +24,45 @@ data class RuleListState(
             }
         }
 
-    val enabledRulesCount: Int
-        get() = rules.count { it.isEnabled }
+    val sections: List<RuleSection>
+        get() {
+            val visibleRules = filteredRules
+            if (visibleRules.isEmpty()) return emptyList()
+            if (!installedPackagesKnown) {
+                return listOf(RuleSection(RuleSectionType.All, visibleRules))
+            }
+            val (installed, notInstalled) = visibleRules.partition {
+                it.packageName in installedPackageNames
+            }
+            return buildList {
+                if (installed.isNotEmpty()) add(RuleSection(RuleSectionType.Installed, installed))
+                if (notInstalled.isNotEmpty()) add(RuleSection(RuleSectionType.NotInstalled, notInstalled))
+            }
+        }
 
-    val forceAllRulesCount: Int
-        get() = rules.count { it.isEnabled && it.isEnabledAll }
+    val installedEnabledRulePackageNames: Set<String>
+        get() = rules.asSequence()
+            .filter { it.isEnabled && it.packageName in installedPackageNames }
+            .mapTo(linkedSetOf()) { it.packageName }
+
+    val installedRulesEnabledAll: Boolean
+        get() {
+            val eligiblePackages = installedEnabledRulePackageNames
+            return eligiblePackages.isNotEmpty() && rules
+                .asSequence()
+                .filter { it.packageName in eligiblePackages }
+                .all(IconRule::isEnabledAll)
+        }
+
+}
+
+data class RuleSection(
+    val type: RuleSectionType,
+    val rules: List<IconRule>,
+)
+
+enum class RuleSectionType {
+    All,
+    Installed,
+    NotInstalled,
 }

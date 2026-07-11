@@ -302,6 +302,19 @@ object RuleStore {
         putBoolean(ruleEnabledAllKey(packageName), enabledAll)
     }
 
+    fun setRulesEnabledAll(packageNames: Collection<String>, enabledAll: Boolean) {
+        val distinctPackageNames = packageNames.asSequence()
+            .filter(String::isNotBlank)
+            .distinct()
+            .toList()
+        if (distinctPackageNames.isEmpty()) return
+        editConfig {
+            distinctPackageNames.forEach { packageName ->
+                putBoolean(ruleEnabledAllKey(packageName), enabledAll)
+            }
+        }
+    }
+
     fun parseCatalog(
         json: String,
         expectedSha256: String? = null,

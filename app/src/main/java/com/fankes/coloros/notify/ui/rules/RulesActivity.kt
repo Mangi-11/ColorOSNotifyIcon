@@ -1,5 +1,6 @@
 package com.fankes.coloros.notify.ui.rules
 
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,9 +15,9 @@ import com.fankes.coloros.notify.diagnostics.DiagnosticEvent
 import com.fankes.coloros.notify.diagnostics.DiagnosticLevel
 import com.fankes.coloros.notify.diagnostics.OccurrencePolicy
 import com.fankes.coloros.notify.framework.MainThreadCallbacks
-import com.fankes.coloros.notify.framework.XposedServiceBridge
 import com.fankes.coloros.notify.framework.RemoteConfigCoordinator
 import com.fankes.coloros.notify.framework.RemoteRuleMirror
+import com.fankes.coloros.notify.framework.XposedServiceBridge
 import com.fankes.coloros.notify.rules.IconRule
 import com.fankes.coloros.notify.rules.RuleStore
 import com.fankes.coloros.notify.ui.theme.ColorOSNotifyIconTheme
@@ -53,6 +54,7 @@ class RulesActivity : ComponentActivity() {
                     onQueryChange = ::updateQuery,
                     onRuleEnabledChange = ::setRuleEnabled,
                     onRuleEnabledAllChange = ::setRuleEnabledAll,
+                    onInstalledRulesEnabledAllChange = ::setInstalledRulesEnabledAll,
                 )
             }
         }
@@ -82,10 +84,13 @@ class RulesActivity : ComponentActivity() {
                     }
                     return@execute
                 }
+                val installedPackages = readInstalledPackages()
                 MainThreadCallbacks.dispatch("rule_list_load") {
                     if (request == loadRequest.get() && !isDestroyed) {
                         uiState = uiState.copy(
                             rules = rules,
+                            installedPackageNames = installedPackages.names,
+                            installedPackagesKnown = installedPackages.available,
                             config = RuleStore.moduleConfig,
                             isLoading = false,
                             loadFailed = false,
@@ -112,6 +117,25 @@ class RulesActivity : ComponentActivity() {
             attributes = mapOf("phase" to "rule_list"),
             occurrence = OccurrencePolicy.Once("rule-list"),
         )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun readInstalledPackages(): InstalledPackageSnapshot = try {
+        InstalledPackageSnapshot(
+            names = packageManager
+                .getInstalledApplications(PackageManager.MATCH_DISABLED_COMPONENTS)
+                .mapTo(mutableSetOf()) { it.packageName },
+            available = true,
+        )
+    } catch (exception: Exception) {
+        AppDiagnostics.logger.report(
+            level = DiagnosticLevel.Warning,
+            event = DiagnosticEvent.InstalledPackagesReadFailed,
+            message = "Unable to group rules by installed packages",
+            cause = exception,
+            occurrence = OccurrencePolicy.Once("rule-list"),
+        )
+        InstalledPackageSnapshot(names = emptySet(), available = false)
     }
 
     private fun updateQuery(query: String) {
@@ -148,6 +172,37 @@ class RulesActivity : ComponentActivity() {
         )
     }
 
+    private fun setInstalledRulesEnabledAll(enabledAll: Boolean, onShowMessage: (String) -> Unit) {
+        val service = requireFrameworkService(onShowMessage) ?: return
+        val packageNames = uiState.installedEnabledRulePackageNames
+        if (packageNames.isEmpty()) return
+        val updated = RemoteConfigCoordinator.update(
+            service = service,
+            mutation = { RuleStore.setRulesEnabledAll(packageNames, enabledAll) },
+        ) { result ->
+            when (result) {
+                is RemoteRuleMirror.PublishResult.Published -> onShowMessage(
+                    getString(
+                        if (enabledAll) {
+                            R.string.message_installed_rules_enabled_all
+                        } else {
+                            R.string.message_installed_rules_disabled_all
+                        },
+                        packageNames.size,
+                    )
+                )
+                is RemoteRuleMirror.PublishResult.Failed -> showPublishFailure(result, onShowMessage)
+            }
+        }
+        if (!updated) return
+        uiState = uiState.copy(
+            rules = uiState.rules.map { rule ->
+                if (rule.packageName in packageNames) rule.copy(isEnabledAll = enabledAll) else rule
+            },
+            config = RuleStore.moduleConfig,
+        )
+    }
+
     private fun showPublishFailure(
         result: RemoteRuleMirror.PublishResult,
         onShowMessage: (String) -> Unit,
@@ -155,7 +210,7 @@ class RulesActivity : ComponentActivity() {
         if (result is RemoteRuleMirror.PublishResult.Failed) {
             onShowMessage(
                 getString(
-                    R.string.message_config_mirror_failed,
+                    R.string.message_settings_apply_failed,
                     result.failure.userMessage,
                 )
             )
@@ -181,7 +236,7 @@ class RulesActivity : ComponentActivity() {
     private fun requireFrameworkService(onShowMessage: (String) -> Unit): XposedService? {
         val service = currentService
         if (service == null) {
-            onShowMessage(getString(R.string.message_framework_unavailable))
+            onShowMessage(getString(R.string.message_service_unavailable))
         }
         return service
     }
@@ -196,4 +251,9 @@ class RulesActivity : ComponentActivity() {
     companion object {
         private val REQUIRED_SCOPES = setOf(SystemPackages.SYSTEM_SCOPE, SystemPackages.SYSTEM_UI)
     }
+
+    private data class InstalledPackageSnapshot(
+        val names: Set<String>,
+        val available: Boolean,
+    )
 }

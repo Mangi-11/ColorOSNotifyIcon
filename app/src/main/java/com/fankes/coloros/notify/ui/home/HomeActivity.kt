@@ -107,7 +107,7 @@ class HomeActivity : ComponentActivity() {
         val updated = RemoteConfigCoordinator.update(service, mutation) { result ->
             if (result is RemoteRuleMirror.PublishResult.Failed) {
                 onShowMessage(
-                    getString(R.string.message_config_mirror_failed, result.failure.userMessage)
+                    getString(R.string.message_settings_apply_failed, result.failure.userMessage)
                 )
             }
         }
@@ -124,7 +124,7 @@ class HomeActivity : ComponentActivity() {
                 if (service == null) {
                     uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
                     onShowMessage(
-                        getString(R.string.message_rules_sync_local_only, syncResult.count)
+                        getString(R.string.message_rules_update_service_unavailable, syncResult.count)
                     )
                     return@onSuccess
                 }
@@ -134,13 +134,13 @@ class HomeActivity : ComponentActivity() {
                     val message = when (mirrorResult) {
                         is RemoteRuleMirror.PublishResult.Published ->
                             getString(
-                                R.string.message_rules_sync_success_remote,
+                                R.string.message_rules_update_success,
                                 syncResult.count
                             )
 
                         is RemoteRuleMirror.PublishResult.Failed ->
                             getString(
-                                R.string.message_rules_sync_mirror_failed,
+                                R.string.message_rules_update_not_applied,
                                 syncResult.count,
                                 mirrorResult.failure.userMessage,
                             )
@@ -151,9 +151,9 @@ class HomeActivity : ComponentActivity() {
                 uiState = uiState.copy(syncStage = RuleSyncStage.Idle)
                 onShowMessage(
                     getString(
-                        R.string.message_rules_sync_failed,
+                        R.string.message_rules_update_failed,
                         (exception as? RuleRepository.SyncFailure)?.userMessage
-                            ?: getString(R.string.message_rules_sync_failed_generic)
+                            ?: getString(R.string.message_unknown_error)
                     )
                 )
             }
@@ -163,14 +163,14 @@ class HomeActivity : ComponentActivity() {
     private fun performRestartSystemUi(onShowMessage: (String) -> Unit) {
         val service = currentService
         if (service == null) {
-            onShowMessage(getString(R.string.message_framework_unavailable))
+            onShowMessage(getString(R.string.message_service_unavailable))
             return
         }
         RemoteConfigCoordinator.publish(service) { mirrorResult ->
             when (mirrorResult) {
                 is RemoteRuleMirror.PublishResult.Published -> restartSystemUiDirectly(onShowMessage)
                 is RemoteRuleMirror.PublishResult.Failed -> onShowMessage(
-                    getString(R.string.message_config_not_synced, mirrorResult.failure.userMessage)
+                    getString(R.string.message_settings_not_applied, mirrorResult.failure.userMessage)
                 )
             }
         }
@@ -203,7 +203,7 @@ class HomeActivity : ComponentActivity() {
     private fun requireFrameworkService(onShowMessage: (String) -> Unit): XposedService? {
         val service = currentService
         if (service == null) {
-            onShowMessage(getString(R.string.message_framework_unavailable))
+            onShowMessage(getString(R.string.message_service_unavailable))
         }
         return service
     }

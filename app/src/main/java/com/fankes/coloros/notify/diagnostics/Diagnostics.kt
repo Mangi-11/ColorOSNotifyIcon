@@ -29,6 +29,7 @@ internal enum class DiagnosticEvent(val id: String) {
     RulesDownloadFailed("rules.download_failed"),
     RulesParseFailed("rules.parse_failed"),
     RulesLoadFailed("rules.load_failed"),
+    InstalledPackagesReadFailed("rules.installed_packages_read_failed"),
     IconDecodeFailed("rules.icon_decode_failed"),
     RulesSaveFailed("rules.save_failed"),
     ServiceConnected("service.connected"),

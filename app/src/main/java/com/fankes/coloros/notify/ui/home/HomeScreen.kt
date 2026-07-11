@@ -57,19 +57,19 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.Check
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Download
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Refresh
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlaySpinnerPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.text.SimpleDateFormat
@@ -167,7 +167,6 @@ private fun SettingsCard(
     onPlaceholderIconEnabledChange: (Boolean) -> Unit,
 ) {
     val canEditConfig = state.canEditConfig
-    val unavailableSummary = stringResource(R.string.label_framework_waiting_summary)
     val ruleLibraryMode = state.config.iconSourceMode == RuleStore.IconSourceMode.RuleLibrary
     Card(
         modifier = Modifier
@@ -177,22 +176,12 @@ private fun SettingsCard(
         IconSourceRow(state = state, onIconSourceModeChange = onIconSourceModeChange)
         ToggleComponent(
             title = stringResource(R.string.label_icon_enhancement_enabled),
-            summary = if (canEditConfig) {
-                stringResource(R.string.label_icon_enhancement_enabled_summary)
-            } else {
-                unavailableSummary
-            },
             checked = state.config.rulesEnabled,
             enabled = canEditConfig,
             onCheckedChange = onRulesEnabledChange,
         )
         ToggleComponent(
             title = stringResource(R.string.label_panel_icon_replacement_enabled),
-            summary = if (canEditConfig) {
-                stringResource(R.string.label_panel_icon_replacement_enabled_summary)
-            } else {
-                unavailableSummary
-            },
             checked = state.config.panelIconReplacementEnabled,
             enabled = canEditConfig,
             onCheckedChange = onPanelIconReplacementEnabledChange,
@@ -200,22 +189,12 @@ private fun SettingsCard(
         if (ruleLibraryMode) {
             ToggleComponent(
                 title = stringResource(R.string.label_oplus_push_special_handling_enabled),
-                summary = if (canEditConfig) {
-                    stringResource(R.string.label_oplus_push_special_handling_enabled_summary)
-                } else {
-                    unavailableSummary
-                },
                 checked = state.config.oplusPushSpecialHandlingEnabled,
                 enabled = canEditConfig && state.config.rulesEnabled,
                 onCheckedChange = onOplusPushSpecialHandlingEnabledChange,
             )
             ToggleComponent(
                 title = stringResource(R.string.label_placeholder_icon_enabled),
-                summary = if (canEditConfig) {
-                    stringResource(R.string.label_placeholder_icon_enabled_summary)
-                } else {
-                    unavailableSummary
-                },
                 checked = state.config.placeholderIconEnabled,
                 enabled = canEditConfig && state.config.rulesEnabled,
                 onCheckedChange = onPlaceholderIconEnabledChange,
@@ -241,11 +220,8 @@ private fun IconSourceRow(
         DropdownItem(text = ruleLibraryTitle, summary = ruleLibrarySummary),
         DropdownItem(text = desktopThemeTitle, summary = desktopThemeSummary),
     )
-    val modeSummary = stringResource(R.string.label_icon_source_mode_summary)
-    val unavailableSummary = stringResource(R.string.label_framework_waiting_summary)
     OverlaySpinnerPreference(
         title = stringResource(R.string.label_icon_source_mode),
-        summary = if (canEditConfig) modeSummary else unavailableSummary,
         items = items,
         selectedIndex = selectedIndex,
         enabled = canEditConfig,
@@ -400,27 +376,13 @@ private fun RulesCard(
                 stringResource(R.string.label_rules_snapshot_synced, state.rulesCount, lastSyncText)
             },
         )
-        BasicComponent(
+        ArrowPreference(
             title = stringResource(R.string.label_manage_rules),
-            summary = stringResource(R.string.label_manage_rules_summary),
-            endActions = {
-                Icon(
-                    imageVector = MiuixIcons.ChevronForward,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                )
-            },
             onClick = onOpenRules,
         )
         BasicComponent(
-            title = stringResource(R.string.button_sync_rules),
-            summary = when (state.syncStage) {
-                RuleSyncStage.Idle -> if (state.canEditConfig) {
-                    stringResource(R.string.label_sync_summary)
-                } else {
-                    stringResource(R.string.label_framework_waiting_summary)
-                }
+            title = when (state.syncStage) {
+                RuleSyncStage.Idle -> stringResource(R.string.button_sync_rules)
                 RuleSyncStage.SyncingRules -> stringResource(R.string.button_syncing_rules)
                 RuleSyncStage.MirroringRemote -> stringResource(R.string.button_mirroring_rules)
             },
@@ -439,7 +401,6 @@ private fun RulesCard(
         )
         BasicComponent(
             title = stringResource(R.string.label_restart_systemui),
-            summary = stringResource(R.string.label_restart_summary),
             endActions = {
                 Icon(
                     imageVector = MiuixIcons.Refresh,
@@ -457,21 +418,14 @@ private fun RulesCard(
 @Composable
 private fun ToggleComponent(
     title: String,
-    summary: String,
     checked: Boolean,
     enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    BasicComponent(
+    SwitchPreference(
         title = title,
-        summary = summary,
-        endActions = {
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                enabled = enabled,
-            )
-        },
+        checked = checked,
+        onCheckedChange = onCheckedChange,
         enabled = enabled,
     )
 }
