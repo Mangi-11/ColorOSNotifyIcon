@@ -55,6 +55,18 @@ android {
     }
 }
 
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set(
+                output.versionName.map { versionName ->
+                    "Glyph-$versionName.apk"
+                }
+            )
+        }
+    }
+}
+
 dependencies {
     compileOnly(libs.libxposed.api)
     implementation(libs.libxposed.service)

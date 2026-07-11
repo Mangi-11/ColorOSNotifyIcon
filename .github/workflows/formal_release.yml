@@ -68,13 +68,13 @@ jobs:
           android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           test -n "$android_sdk"
           build_tools=$(find "$android_sdk/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          unsigned_source=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*-unsigned.apk' -print -quit)
           version_name=$(sed -nE 's/^project\.app\.versionName="?([^"[:space:]]+)"?$/\1/p' gradle.properties)
           test -n "$version_name"
+          unsigned_source=$(find app/build/outputs/apk/release -maxdepth 1 -type f -name "Glyph-${version_name}.apk" -print -quit)
           test -n "$build_tools"
           test -n "$unsigned_source"
           "$build_tools/zipalign" -c -P 16 4 "$unsigned_source"
-          release_target="${RUNNER_TEMP}/ColorOSNotifyIcon-${version_name}-release.apk"
+          release_target="${RUNNER_TEMP}/Glyph-${version_name}.apk"
           "$build_tools/apksigner" sign \
             --ks "$keystore_path" \
             --ks-type PKCS12 \
