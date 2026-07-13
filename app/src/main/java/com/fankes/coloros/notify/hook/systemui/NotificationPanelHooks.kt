@@ -13,10 +13,7 @@ import com.fankes.coloros.notify.diagnostics.Diagnostics
 import com.fankes.coloros.notify.hook.HookRegistrar
 import com.fankes.coloros.notify.hook.icon.NotificationIconResolver
 import com.fankes.coloros.notify.hook.runtimeFailure
-import java.util.Collections
-import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 internal class NotificationPanelHooks(
     private val hooks: HookRegistrar,
@@ -26,10 +23,9 @@ internal class NotificationPanelHooks(
 ) {
     private val systemUiIdCache = ConcurrentHashMap<String, Int>()
     private val headerIconClaims = HeaderIconClaimRegistry<ImageView, Drawable>()
-    private val groupReapplyTasks = Collections.synchronizedMap(WeakHashMap<ImageView, Runnable>())
 
     fun install() {
-        installOplusHeaderColorGuard()
+        installOplusHeaderHooks()
         members.headerOnContentUpdated?.let { method ->
             hooks.install(method, "systemui.panel.header.onContentUpdated") { chain ->
                 val result = chain.proceed()
@@ -43,6 +39,15 @@ internal class NotificationPanelHooks(
             hooks.install(method, "systemui.panel.header.resolveHeaderViews") { chain ->
                 val result = chain.proceed()
                 chain.thisObject?.let { wrapper -> applyPanelIcon(wrapper) }
+                result
+            }
+        }
+        members.headerSetIsChildInGroup?.let { method ->
+            hooks.install(method, "systemui.panel.header.setIsChildInGroup") { chain ->
+                val result = chain.proceed()
+                if (chain.args.firstOrNull() == false) {
+                    chain.thisObject?.let(::applyPanelIcon)
+                }
                 result
             }
         }
@@ -67,19 +72,18 @@ internal class NotificationPanelHooks(
     }
 
     /** Called on the main thread before notifications are refreshed for a new snapshot. */
-    fun onSnapshotPublished() {
-        headerIconClaims.clear()
-        val pending = synchronized(groupReapplyTasks) {
-            groupReapplyTasks.entries.map { it.key to it.value }
-                .also { groupReapplyTasks.clear() }
-        }
-        pending.forEach { (view, action) -> view.removeCallbacks(action) }
+    fun onSnapshotPublished() = headerIconClaims.clear()
+
+    private fun installOplusHeaderHooks() {
+        val oplusHeader = members.oplusHeader ?: return
+        installOplusHeaderColorGuard(oplusHeader)
+        installOplusHeaderRoundnessReapply(oplusHeader)
     }
 
-    private fun installOplusHeaderColorGuard() {
-        val oplusHeader = members.oplusHeader ?: return
+    private fun installOplusHeaderColorGuard(oplusHeader: OplusHeaderMembers) {
+        val method = oplusHeader.updateIconColor ?: return
         val getIcon = members.headerGetIcon ?: return
-        hooks.install(oplusHeader.updateIconColor, "systemui.panel.header.updateIconColor") { chain ->
+        hooks.install(method, "systemui.panel.header.updateIconColor") { chain ->
             val snapshot = configuration.snapshot
             if (!snapshot.config.panelIconReplacementEnabled) return@install chain.proceed()
             val extension = chain.thisObject ?: return@install chain.proceed()
@@ -101,6 +105,28 @@ internal class NotificationPanelHooks(
                 false
             }
             if (shouldBlockColorUpdate) false else chain.proceed()
+        }
+    }
+
+    private fun installOplusHeaderRoundnessReapply(oplusHeader: OplusHeaderMembers) {
+        val method = oplusHeader.updateIconRoundness ?: return
+        hooks.install(method, "systemui.panel.header.updateIconRoundness") { chain ->
+            val result = chain.proceed()
+            chain.thisObject?.let { extension ->
+                try {
+                    oplusHeader.getBase.invoke(extension)?.let { wrapper ->
+                        applyPanelIcon(wrapper, target = wrapper.iconTarget)
+                    }
+                } catch (exception: Exception) {
+                    diagnostics.runtimeFailure(
+                        scope = "panel:header_roundness_reapply",
+                        message = "Oplus Header 圆角处理后恢复图标失败",
+                        cause = exception,
+                        revision = configuration.snapshot.revision,
+                    )
+                }
+            }
+            result
         }
     }
 
@@ -145,14 +171,8 @@ internal class NotificationPanelHooks(
                 currentDrawable = icon.drawable,
             ) ?: return
 
-            if (target == PanelIconTarget.OplusGroupSummary) {
-                icon.clearOplusGroupSummaryDecoration()
-                icon.applyRenderPlan(plan, target)
-                icon.reapplyOplusGroupSummaryIcon(plan, snapshot) {
-                    statusBarNotificationFromRow(row)?.key == sbn.key
-                }
-            } else {
-                icon.applyRenderPlan(plan, target)
+            icon.applyRenderPlan(plan, target)
+            if (target == PanelIconTarget.Header) {
                 icon.drawable?.let { drawable -> headerIconClaims.claim(icon, sbn.key, drawable) }
             }
         } catch (exception: Exception) {
@@ -169,6 +189,13 @@ internal class NotificationPanelHooks(
         val entry = members.expandableRowGetEntry.invoke(row) ?: return null
         return members.notificationEntryGetSbn.invoke(entry) as? StatusBarNotification
     }
+
+    private val Any.iconTarget: PanelIconTarget
+        get() = if (members.oplusGroupWrapper?.isInstance(this) == true) {
+            PanelIconTarget.OplusGroupSummary
+        } else {
+            PanelIconTarget.Header
+        }
 
     private fun View.findOplusGroupSummaryIcon(): ImageView? {
         val headerId = systemUiId("oplus_notification_collapsed_group_header")
@@ -189,11 +216,7 @@ internal class NotificationPanelHooks(
         plan: NotificationIconResolver.PanelIconRenderPlan,
         target: PanelIconTarget,
     ) {
-        clearColorFilter()
-        imageTintList = null
-        background = null
-        foreground = null
-        clipToOutline = false
+        clearHostDecoration(target)
         if (target == PanelIconTarget.OplusGroupSummary) {
             scaleType = ImageView.ScaleType.FIT_CENTER
             adjustViewBounds = false
@@ -204,13 +227,14 @@ internal class NotificationPanelHooks(
         }
     }
 
-    private fun ImageView.clearOplusGroupSummaryDecoration() {
+    private fun ImageView.clearHostDecoration(target: PanelIconTarget) {
         background = null
         foreground = null
         clipToOutline = false
         imageTintList = null
         clearColorFilter()
 
+        if (target != PanelIconTarget.OplusGroupSummary) return
         val container = parent as? View
         if (container?.id == systemUiId("icon_container")) {
             container.background = null
@@ -223,45 +247,8 @@ internal class NotificationPanelHooks(
         }
     }
 
-    private fun ImageView.reapplyOplusGroupSummaryIcon(
-        plan: NotificationIconResolver.PanelIconRenderPlan,
-        snapshot: RuntimeSnapshot,
-        isStillSameNotification: () -> Boolean,
-    ) {
-        groupReapplyTasks.remove(this)?.let { removeCallbacks(it) }
-        val remainingRuns = AtomicInteger(OPLUS_GROUP_ICON_REAPPLY_DELAYS_MS.size)
-        lateinit var action: Runnable
-        action = Runnable {
-            try {
-                if (!isAttachedToWindow || !configuration.isCurrent(snapshot)) return@Runnable
-                if (!isStillSameNotification()) return@Runnable
-                clearOplusGroupSummaryDecoration()
-                applyRenderPlan(plan, PanelIconTarget.OplusGroupSummary)
-            } catch (exception: Exception) {
-                diagnostics.runtimeFailure(
-                    scope = "panel:group_reapply",
-                    message = "Oplus 聚合摘要图标延迟重绘失败",
-                    cause = exception,
-                    revision = snapshot.revision,
-                )
-            } finally {
-                if (remainingRuns.decrementAndGet() <= 0) {
-                    synchronized(groupReapplyTasks) {
-                        if (groupReapplyTasks[this] === action) groupReapplyTasks.remove(this)
-                    }
-                }
-            }
-        }
-        groupReapplyTasks[this] = action
-        OPLUS_GROUP_ICON_REAPPLY_DELAYS_MS.forEach { delay -> postDelayed(action, delay) }
-    }
-
     private enum class PanelIconTarget(val diagnosticName: String) {
         Header("header"),
         OplusGroupSummary("oplus_group_summary"),
-    }
-
-    private companion object {
-        val OPLUS_GROUP_ICON_REAPPLY_DELAYS_MS = longArrayOf(64L, 180L, 360L)
     }
 }

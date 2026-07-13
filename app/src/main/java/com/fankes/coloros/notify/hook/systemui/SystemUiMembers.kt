@@ -24,7 +24,8 @@ internal data class StatusBarMembers(
 
 internal data class OplusHeaderMembers(
     val getBase: Method,
-    val updateIconColor: Method,
+    val updateIconColor: Method?,
+    val updateIconRoundness: Method?,
 )
 
 internal data class PanelMembers(
@@ -33,8 +34,10 @@ internal data class PanelMembers(
     val expandableRowGetEntry: Method,
     val headerOnContentUpdated: Method?,
     val headerResolveHeaderViews: Method?,
+    val headerSetIsChildInGroup: Method?,
     val headerGetIcon: Method?,
     val oplusHeader: OplusHeaderMembers?,
+    val oplusGroupWrapper: Class<*>?,
     val oplusGroupInitIcon: Method?,
     val oplusGroupResolveHeaderViews: Method?,
 )
@@ -169,6 +172,14 @@ internal object SystemUiMembers {
         val headerResolveHeaderViews = headerWrapper?.let {
             Reflection.findMethodReturning(it, "resolveHeaderViews", Void.TYPE)
         }
+        val headerSetIsChildInGroup = headerWrapper?.let {
+            Reflection.findMethodReturning(
+                it,
+                "setIsChildInGroup",
+                Void.TYPE,
+                Boolean::class.javaPrimitiveType!!,
+            )
+        }
         val headerGetIcon = headerWrapper?.let {
             Reflection.findMethodReturning(it, "getIcon", ImageView::class.java)
         }
@@ -180,6 +191,12 @@ internal object SystemUiMembers {
             diagnostics.memberMissing(
                 scope = "systemui:panel:header",
                 message = "通知 Header 成员签名不完整，相关面板路径将独立跳过",
+            )
+        }
+        if (headerWrapper != null && headerSetIsChildInGroup == null) {
+            diagnostics.memberMissing(
+                scope = "systemui:panel:header_group_state",
+                message = "未找到 setIsChildInGroup(boolean)，跳过退出分组后的图标恢复",
             )
         }
 
@@ -204,7 +221,7 @@ internal object SystemUiMembers {
         if (oplusHeaderExtension == null) {
             diagnostics.memberMissing(
                 scope = "systemui:panel:oplus_header_class",
-                message = "未找到 Oplus Header 扩展，跳过二次着色保护",
+                message = "未找到 Oplus Header 扩展，跳过着色与圆角覆盖保护",
             )
         }
         val oplusHeader = oplusHeaderExtension?.let { extension ->
@@ -218,14 +235,32 @@ internal object SystemUiMembers {
                 "updateIconColor",
                 Boolean::class.javaPrimitiveType!!,
             )
-            if (getBase == null || updateIconColor == null) {
+            val updateIconRoundness = Reflection.findMethodReturning(
+                extension,
+                "updateIconRoundness",
+                Void.TYPE,
+                Boolean::class.javaPrimitiveType!!,
+            )
+            if (getBase == null) {
                 diagnostics.memberMissing(
                     scope = "systemui:panel:oplus_header",
-                    message = "Oplus Header 扩展签名不匹配，跳过二次着色保护",
+                    message = "Oplus Header 基类访问签名不匹配，跳过着色与圆角覆盖保护",
                 )
                 null
             } else {
-                OplusHeaderMembers(getBase, updateIconColor)
+                if (updateIconColor == null) {
+                    diagnostics.memberMissing(
+                        scope = "systemui:panel:oplus_header_color",
+                        message = "未找到 updateIconColor()，跳过二次着色保护",
+                    )
+                }
+                if (updateIconRoundness == null) {
+                    diagnostics.memberMissing(
+                        scope = "systemui:panel:oplus_header_roundness",
+                        message = "未找到 updateIconRoundness(boolean)，跳过异步圆角覆盖修复",
+                    )
+                }
+                OplusHeaderMembers(getBase, updateIconColor, updateIconRoundness)
             }
         }
 
@@ -235,8 +270,10 @@ internal object SystemUiMembers {
             expandableRowGetEntry = expandableRowGetEntry,
             headerOnContentUpdated = headerOnContentUpdated,
             headerResolveHeaderViews = headerResolveHeaderViews,
+            headerSetIsChildInGroup = headerSetIsChildInGroup,
             headerGetIcon = headerGetIcon,
             oplusHeader = oplusHeader,
+            oplusGroupWrapper = oplusGroupWrapper,
             oplusGroupInitIcon = oplusGroupInitIcon,
             oplusGroupResolveHeaderViews = oplusGroupResolveHeaderViews,
         )
