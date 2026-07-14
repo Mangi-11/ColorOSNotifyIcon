@@ -21,6 +21,7 @@ data class HomeScreenState(
     val rulesCount: Int = 0,
     val rulesUpdatedAt: Long = 0L,
     val config: RuleStore.ModuleConfig = RuleStore.ModuleConfig(),
+    val launcherIconHidden: Boolean = false,
     val syncStage: RuleSyncStage = RuleSyncStage.Idle,
 ) {
     val isModuleActive: Boolean

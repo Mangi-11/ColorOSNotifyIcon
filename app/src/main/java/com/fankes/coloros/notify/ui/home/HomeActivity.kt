@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.fankes.coloros.notify.R
+import com.fankes.coloros.notify.core.LauncherIconController
 import com.fankes.coloros.notify.framework.XposedServiceBridge
 import com.fankes.coloros.notify.framework.RemoteConfigCoordinator
 import com.fankes.coloros.notify.framework.RemoteRuleMirror
@@ -47,6 +48,7 @@ class HomeActivity : ComponentActivity() {
                     onPanelIconReplacementEnabledChange = ::setPanelIconReplacementEnabled,
                     onOplusPushSpecialHandlingEnabledChange = ::setOplusPushSpecialHandlingEnabled,
                     onPlaceholderIconEnabledChange = ::setPlaceholderIconEnabled,
+                    onLauncherIconHiddenChange = ::setLauncherIconHidden,
                 )
             }
         }
@@ -71,7 +73,27 @@ class HomeActivity : ComponentActivity() {
             rulesCount = RuleStore.rulesCount,
             rulesUpdatedAt = RuleStore.rulesUpdatedAt,
             config = RuleStore.moduleConfig,
+            launcherIconHidden = LauncherIconController.isHidden(this),
         )
+    }
+
+    private fun setLauncherIconHidden(hidden: Boolean, onShowMessage: (String) -> Unit) {
+        runCatching { LauncherIconController.setHidden(this, hidden) }
+            .onSuccess {
+                val isHidden = LauncherIconController.isHidden(this)
+                uiState = uiState.copy(
+                    launcherIconHidden = isHidden,
+                )
+                if (isHidden) onShowMessage(getString(R.string.message_launcher_icon_hidden))
+            }
+            .onFailure { exception ->
+                onShowMessage(
+                    getString(
+                        R.string.message_launcher_icon_update_failed,
+                        exception.localizedMessage ?: getString(R.string.message_unknown_error),
+                    )
+                )
+            }
     }
 
     private fun setRulesEnabled(enabled: Boolean, onShowMessage: (String) -> Unit) {

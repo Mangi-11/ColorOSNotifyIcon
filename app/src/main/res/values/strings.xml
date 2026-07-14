@@ -4,6 +4,7 @@
     <string name="home_title">Glyph</string>
     <string name="section_module_status">状态</string>
     <string name="section_feature_settings">图标设置</string>
+    <string name="section_app_settings">桌面图标</string>
     <string name="section_rules_data">规则</string>
     <string name="section_rule_management">规则列表</string>
     <string name="rules_group_installed">已安装 · %1$d</string>
@@ -27,6 +28,7 @@
     <string name="label_panel_icon_replacement_enabled">通知中心图标</string>
     <string name="label_oplus_push_special_handling_enabled">适配系统推送</string>
     <string name="label_placeholder_icon_enabled">未适配图标占位</string>
+    <string name="label_hide_launcher_icon">隐藏桌面图标</string>
     <string name="label_rule_enable">启用替换</string>
     <string name="label_rule_force_all">全部替换</string>
     <string name="rules_empty">暂无规则，请先更新规则</string>
@@ -58,4 +60,6 @@
     <string name="message_restart_requested">已请求重启 SystemUI</string>
     <string name="message_restart_failed">重启失败：%1$s</string>
     <string name="message_restart_failed_generic">无法执行 SystemUI 重启命令</string>
+    <string name="message_launcher_icon_hidden">已隐藏，可从 LSPosed 管理器打开；若图标仍显示，请关闭“强制显示桌面图标”</string>
+    <string name="message_launcher_icon_update_failed">桌面图标设置失败：%1$s</string>
 </resources>

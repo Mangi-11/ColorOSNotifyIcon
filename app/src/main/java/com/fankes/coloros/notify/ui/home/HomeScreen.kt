@@ -89,6 +89,7 @@ fun HomeScreen(
     onPanelIconReplacementEnabledChange: (Boolean, (String) -> Unit) -> Unit,
     onOplusPushSpecialHandlingEnabledChange: (Boolean, (String) -> Unit) -> Unit,
     onPlaceholderIconEnabledChange: (Boolean, (String) -> Unit) -> Unit,
+    onLauncherIconHiddenChange: (Boolean, (String) -> Unit) -> Unit,
 ) {
     var showRestartDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -143,6 +144,15 @@ fun HomeScreen(
                     onRestartClick = { showRestartDialog = true },
                 )
             }
+            item { SmallTitle(text = stringResource(R.string.section_app_settings)) }
+            item {
+                AppSettingsCard(
+                    launcherIconHidden = state.launcherIconHidden,
+                    onLauncherIconHiddenChange = {
+                        onLauncherIconHiddenChange(it, ::showSnackbar)
+                    },
+                )
+            }
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
@@ -153,6 +163,24 @@ fun HomeScreen(
                 showRestartDialog = false
                 onRestartSystemUi(::showSnackbar)
             },
+        )
+    }
+}
+
+@Composable
+private fun AppSettingsCard(
+    launcherIconHidden: Boolean,
+    onLauncherIconHiddenChange: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .padding(horizontal = 12.dp)
+            .padding(bottom = 12.dp),
+    ) {
+        ToggleComponent(
+            title = stringResource(R.string.label_hide_launcher_icon),
+            checked = launcherIconHidden,
+            onCheckedChange = onLauncherIconHiddenChange,
         )
     }
 }
@@ -599,6 +627,7 @@ private fun HomeScreenLightPreview() {
             onPanelIconReplacementEnabledChange = { _, _ -> },
             onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
             onPlaceholderIconEnabledChange = { _, _ -> },
+            onLauncherIconHiddenChange = { _, _ -> },
         )
     }
 }
@@ -627,6 +656,7 @@ private fun HomeScreenDarkPreview() {
             onPanelIconReplacementEnabledChange = { _, _ -> },
             onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
             onPlaceholderIconEnabledChange = { _, _ -> },
+            onLauncherIconHiddenChange = { _, _ -> },
         )
     }
 }
@@ -654,6 +684,7 @@ private fun HomeScreenEmptyPreview() {
             onPanelIconReplacementEnabledChange = { _, _ -> },
             onOplusPushSpecialHandlingEnabledChange = { _, _ -> },
             onPlaceholderIconEnabledChange = { _, _ -> },
+            onLauncherIconHiddenChange = { _, _ -> },
         )
     }
 }
