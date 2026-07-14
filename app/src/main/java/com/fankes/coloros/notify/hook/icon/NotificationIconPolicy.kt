@@ -19,15 +19,22 @@ internal enum class RuleReplacement {
     None,
 }
 
+internal enum class OriginalIconCompatibility {
+    Unchecked,
+    Compatible,
+    Incompatible,
+}
+
 internal object NotificationIconPolicy {
 
     fun shouldKeepHostDefault(
         config: IconPolicyConfig,
         isOplusPush: Boolean,
     ): Boolean =
-        config.source == PolicyIconSource.RuleLibrary &&
-            !config.handleOplusPush &&
-            isOplusPush
+        shouldKeepHostAppIconBehavior(config) && isOplusPush
+
+    fun shouldKeepHostAppIconBehavior(config: IconPolicyConfig): Boolean =
+        config.source == PolicyIconSource.RuleLibrary && !config.handleOplusPush
 
     fun shouldProcessPanel(
         config: IconPolicyConfig,
@@ -45,23 +52,28 @@ internal object NotificationIconPolicy {
         config: IconPolicyConfig,
         ruleEnabled: Boolean,
         ruleEnabledAll: Boolean,
-        originalIsMonochrome: Boolean,
+        isOplusPush: Boolean,
+        originalCompatibility: OriginalIconCompatibility,
     ): RuleReplacement {
         if (!config.rulesEnabled || config.source != PolicyIconSource.RuleLibrary) {
             return RuleReplacement.None
         }
-        if (ruleEnabled && (ruleEnabledAll || !originalIsMonochrome)) {
+        if (isOplusPush && !config.handleOplusPush) return RuleReplacement.None
+
+        // These choices are explicit and do not depend on whether the original Icon can be loaded.
+        if (ruleEnabled && (ruleEnabledAll || isOplusPush)) {
             return RuleReplacement.Rule
         }
-        return if (config.placeholderEnabled && !originalIsMonochrome) {
-            RuleReplacement.Placeholder
-        } else {
-            RuleReplacement.None
+
+        return when (originalCompatibility) {
+            OriginalIconCompatibility.Unchecked,
+            OriginalIconCompatibility.Compatible -> RuleReplacement.None
+
+            OriginalIconCompatibility.Incompatible -> when {
+                ruleEnabled -> RuleReplacement.Rule
+                config.placeholderEnabled -> RuleReplacement.Placeholder
+                else -> RuleReplacement.None
+            }
         }
     }
-
-    fun shouldRestoreOriginal(
-        originalIsMonochrome: Boolean,
-        currentIsMonochrome: Boolean?,
-    ): Boolean = originalIsMonochrome && currentIsMonochrome == false
 }

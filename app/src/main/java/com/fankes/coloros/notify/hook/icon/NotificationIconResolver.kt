@@ -23,39 +23,52 @@ internal class NotificationIconResolver(
 ) {
     private val policyConfig = config.toPolicyConfig()
 
+    data class StatusBarIconRenderPlan(
+        val icon: Icon,
+        val isColorable: Boolean,
+    )
+
     data class PanelIconRenderPlan(
         val drawable: Drawable,
         val tintColor: Int?,
     )
 
-    fun resolveStatusBarIcon(
+    fun resolveStatusBarIconPlan(
         context: Context,
         sbn: StatusBarNotification,
         originalSmallIcon: Icon?,
-        currentStatusBarIcon: Icon?,
-    ): Icon? = resolveOrFallback("status_bar", "状态栏图标解析失败") {
-        if (NotificationIconPolicy.shouldKeepHostDefault(policyConfig, sbn.isOplusPush())) return null
-        resolveThemeIconReplacement(context, sbn)?.toIconOrNull(context, "status_bar")?.let { return it }
-        val originalDrawable = originalSmallIcon?.loadDrawable(context)?.mutate() ?: return null
-        val originalIsMonochrome = IconBitmapClassifier.isMonochromeDrawable(originalDrawable)
-        resolveRuleIconReplacement(sbn, originalIsMonochrome)
-            ?.toIconOrNull(context, "status_bar")
+    ): StatusBarIconRenderPlan? = resolveOrFallback("status_bar", "状态栏图标解析失败") {
+        if (shouldKeepHostDefault(sbn)) return null
+        resolveThemeIconReplacement(context, sbn)
+            ?.toStatusBarIconRenderPlanOrNull(context, "status_bar")
+            ?.let { return it }
+        val forcedReplacement = resolveRuleIconReplacement(
+            sbn,
+            OriginalIconCompatibility.Unchecked,
+        )
+        forcedReplacement
+            ?.toStatusBarIconRenderPlanOrNull(context, "status_bar")
             ?.let { return it }
 
-        if (
-            NotificationIconPolicy.shouldRestoreOriginal(
-                originalIsMonochrome,
-                currentStatusBarIcon?.isMonochrome(context),
+        val originalDrawable = originalSmallIcon?.loadDrawable(context)?.mutate() ?: return null
+        val originalCompatibility = NotificationIconMaskClassifier.classify(originalDrawable)
+        if (forcedReplacement == null) {
+            resolveRuleIconReplacement(
+                sbn,
+                originalCompatibility.toPolicyCompatibility(),
             )
-        ) return originalSmallIcon
-        return null
+                ?.toStatusBarIconRenderPlanOrNull(context, "status_bar")
+                ?.let { return it }
+        }
+        originalSmallIcon
+            .takeIf { originalCompatibility == NotificationIconMaskCompatibility.Compatible }
+            ?.let { icon -> StatusBarIconRenderPlan(icon = icon, isColorable = true) }
     }
 
     fun resolvePanelIconPlan(
         context: Context,
         sbn: StatusBarNotification,
         originalSmallIcon: Icon?,
-        currentDrawable: Drawable?,
     ): PanelIconRenderPlan? = resolveOrFallback("panel", "通知面板图标解析失败") {
         if (
             !NotificationIconPolicy.shouldProcessPanel(
@@ -68,18 +81,24 @@ internal class NotificationIconResolver(
             ?.toPanelIconRenderPlanOrNull(context, "panel")
             ?.let { return it }
 
-        val originalDrawable = originalSmallIcon?.loadDrawable(context)?.mutate() ?: return null
-        val originalIsMonochrome = IconBitmapClassifier.isMonochromeDrawable(originalDrawable)
-        resolveRuleIconReplacement(sbn, originalIsMonochrome)
-            ?.toPanelIconRenderPlanOrNull(context, "panel")
-            ?.let { return it }
+        val forcedReplacement = resolveRuleIconReplacement(
+            sbn,
+            OriginalIconCompatibility.Unchecked,
+        )
+        forcedReplacement?.toPanelIconRenderPlanOrNull(context, "panel")?.let { return it }
 
-        if (
-            NotificationIconPolicy.shouldRestoreOriginal(
-                originalIsMonochrome,
-                currentDrawable?.let(IconBitmapClassifier::isMonochromeDrawable),
+        val originalDrawable = originalSmallIcon?.loadDrawable(context)?.mutate() ?: return null
+        val originalCompatibility = NotificationIconMaskClassifier.classify(originalDrawable)
+        if (forcedReplacement == null) {
+            resolveRuleIconReplacement(
+                sbn,
+                originalCompatibility.toPolicyCompatibility(),
             )
-        ) {
+                ?.toPanelIconRenderPlanOrNull(context, "panel")
+                ?.let { return it }
+        }
+
+        if (originalCompatibility == NotificationIconMaskCompatibility.Compatible) {
             return PanelIconRenderPlan(
                 drawable = originalDrawable,
                 tintColor = context.defaultPanelIconTint,
@@ -98,7 +117,7 @@ internal class NotificationIconResolver(
 
     private fun resolveRuleIconReplacement(
         sbn: StatusBarNotification,
-        originalIsMonochrome: Boolean,
+        originalCompatibility: OriginalIconCompatibility,
     ): IconReplacement? {
         val rule = rules[sbn.rulePackageName()]
         return when (
@@ -106,7 +125,8 @@ internal class NotificationIconResolver(
                 config = policyConfig,
                 ruleEnabled = rule?.isEnabled == true,
                 ruleEnabledAll = rule?.isEnabledAll == true,
-                originalIsMonochrome = originalIsMonochrome,
+                isOplusPush = sbn.isOplusPush(),
+                originalCompatibility = originalCompatibility,
             )
         ) {
             RuleReplacement.Rule -> rule?.let(IconReplacement::RuleIcon)
@@ -115,33 +135,41 @@ internal class NotificationIconResolver(
         }
     }
 
-    private fun IconReplacement.toIcon(context: Context): Icon {
-        val darkEffectEnabled = context.isDarkIconEffectEnabled()
-        return when (this) {
-            is IconReplacement.ThemeIcon -> Icon.createWithBitmap(bitmap.withDarkEffect(darkEffectEnabled))
-            is IconReplacement.RuleIcon -> Icon.createWithBitmap(rule.iconBitmap.withDarkEffect(darkEffectEnabled))
+    private fun IconReplacement.toStatusBarIconRenderPlan(
+        context: Context,
+    ): StatusBarIconRenderPlan = StatusBarIconRenderPlan(
+        icon = when (this) {
+            is IconReplacement.ThemeIcon -> Icon.createWithBitmap(bitmap)
+            is IconReplacement.RuleIcon -> Icon.createWithBitmap(
+                rule.iconBitmap.withDarkEffect(context.isDarkIconEffectEnabled())
+            )
             IconReplacement.Placeholder -> Icon.createWithBitmap(PlaceholderIconFactory.createBitmap())
-        }
-    }
+        },
+        // Theme icons are full-color launcher assets. Rule, placeholder and restored original
+        // icons are notification masks whose RGB is replaced by SystemUI.
+        isColorable = this !is IconReplacement.ThemeIcon,
+    )
 
-    private fun IconReplacement.toIconOrNull(context: Context, feature: String): Icon? = try {
-        toIcon(context)
+    private fun IconReplacement.toStatusBarIconRenderPlanOrNull(
+        context: Context,
+        feature: String,
+    ): StatusBarIconRenderPlan? = try {
+        toStatusBarIconRenderPlan(context)
     } catch (exception: Exception) {
         reportReplacementFailure(feature, exception)
         null
     }
 
     private fun IconReplacement.toPanelIconRenderPlan(context: Context): PanelIconRenderPlan {
-        val darkEffectEnabled = context.isDarkIconEffectEnabled()
         return when (this) {
             is IconReplacement.ThemeIcon -> PanelIconRenderPlan(
-                drawable = bitmap.withDarkEffect(darkEffectEnabled).toDrawable(context.resources),
+                drawable = bitmap.toDrawable(context.resources),
                 tintColor = null,
             )
             is IconReplacement.RuleIcon -> PanelIconRenderPlan(
                 drawable = rule.iconBitmap.toDrawable(context.resources),
                 tintColor = (rule.iconColor.takeIf { it != 0 } ?: context.defaultPanelIconTint)
-                    .withDarkEffect(darkEffectEnabled),
+                    .withDarkEffect(context.isDarkIconEffectEnabled()),
             )
             IconReplacement.Placeholder -> PanelIconRenderPlan(
                 drawable = PlaceholderIconFactory.createBitmap().toDrawable(context.resources),
@@ -190,9 +218,6 @@ internal class NotificationIconResolver(
             }
         }
 
-    private fun Icon.isMonochrome(context: Context): Boolean? =
-        loadDrawable(context)?.mutate()?.let(IconBitmapClassifier::isMonochromeDrawable)
-
     private inline fun <T> resolveOrFallback(
         feature: String,
         message: String,
@@ -212,6 +237,12 @@ internal class NotificationIconResolver(
     private fun StatusBarNotification.rulePackageName(): String =
         packageName.orEmpty()
 
+    fun shouldKeepHostDefault(sbn: StatusBarNotification): Boolean =
+        NotificationIconPolicy.shouldKeepHostDefault(policyConfig, sbn.isOplusPush())
+
+    fun shouldKeepHostAppIconBehavior(): Boolean =
+        NotificationIconPolicy.shouldKeepHostAppIconBehavior(policyConfig)
+
     private fun StatusBarNotification.isOplusPush(): Boolean =
         opPkg == SYSTEM_FRAMEWORK_PACKAGE && opPkg != packageName
 
@@ -219,6 +250,13 @@ internal class NotificationIconResolver(
         if (notification.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true) return true
         return notification.category == Notification.CATEGORY_TRANSPORT
     }
+
+    private fun NotificationIconMaskCompatibility.toPolicyCompatibility(): OriginalIconCompatibility =
+        when (this) {
+            NotificationIconMaskCompatibility.Compatible -> OriginalIconCompatibility.Compatible
+            NotificationIconMaskCompatibility.Incompatible -> OriginalIconCompatibility.Incompatible
+            NotificationIconMaskCompatibility.Unknown -> OriginalIconCompatibility.Unchecked
+        }
 
     private sealed class IconReplacement(val diagnosticName: String) {
         data class ThemeIcon(val bitmap: Bitmap) : IconReplacement("theme")

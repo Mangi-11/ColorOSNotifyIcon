@@ -7,11 +7,10 @@ import android.graphics.LightingColorFilter
 import android.graphics.Paint
 import androidx.core.graphics.createBitmap
 
-/** Mirrors ColorOS Launcher's dark-mode treatment for themed app icons. */
+/** Applies ColorOS' launcher dark-mode compensation to module-provided rule assets. */
 internal object ThemeIconDarkEffect {
 
-    private const val CLASSIC_THEME = 2
-    private const val DARK_THEME = 3
+    private const val RECTANGLE_THEME = 2
     private const val THEME_SHIFT = 4
     private const val THEME_MASK = 0xF
     private const val DARK_MODE_ICON_SHIFT = 61
@@ -23,7 +22,7 @@ internal object ThemeIconDarkEffect {
 
         val theme = ((uxIconConfig ushr THEME_SHIFT) and THEME_MASK.toLong()).toInt()
         val darkModeIcon = ((uxIconConfig ushr DARK_MODE_ICON_SHIFT) and 1L) == 1L
-        return (theme == CLASSIC_THEME && darkModeIcon) || theme == DARK_THEME
+        return theme == RECTANGLE_THEME && darkModeIcon
     }
 
     fun apply(bitmap: Bitmap): Bitmap {

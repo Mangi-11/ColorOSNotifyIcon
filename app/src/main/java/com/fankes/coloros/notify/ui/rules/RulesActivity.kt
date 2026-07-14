@@ -1,5 +1,6 @@
 package com.fankes.coloros.notify.ui.rules
 
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -84,7 +85,9 @@ class RulesActivity : ComponentActivity() {
                     }
                     return@execute
                 }
-                val installedPackages = readInstalledPackages()
+                val installedPackages = readInstalledPackages(
+                    rulePackageNames = rules.mapTo(linkedSetOf()) { it.packageName },
+                )
                 MainThreadCallbacks.dispatch("rule_list_load") {
                     if (request == loadRequest.get() && !isDestroyed) {
                         uiState = uiState.copy(
@@ -120,12 +123,31 @@ class RulesActivity : ComponentActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun readInstalledPackages(): InstalledPackageSnapshot = try {
-        InstalledPackageSnapshot(
-            names = packageManager
-                .getInstalledApplications(PackageManager.MATCH_DISABLED_COMPONENTS)
-                .mapTo(mutableSetOf()) { it.packageName },
-            available = true,
+    private fun readInstalledPackages(rulePackageNames: Set<String>): InstalledPackageSnapshot = try {
+        val launcherApps by lazy(LazyThreadSafetyMode.NONE) {
+            checkNotNull(getSystemService(LauncherApps::class.java)) {
+                "LauncherApps service is unavailable"
+            }
+        }
+        InstalledPackageInventory.collect(
+            rulePackageNames = rulePackageNames,
+            readCurrentUserPackages = {
+                packageManager
+                    .getInstalledApplications(PackageManager.MATCH_DISABLED_COMPONENTS)
+                    .mapTo(mutableSetOf()) { it.packageName }
+            },
+            readAccessibleProfiles = { launcherApps.profiles },
+            isInstalledForProfile = { packageName, profile ->
+                try {
+                    launcherApps.getApplicationInfo(
+                        packageName,
+                        PackageManager.MATCH_DISABLED_COMPONENTS,
+                        profile,
+                    ) != null
+                } catch (_: PackageManager.NameNotFoundException) {
+                    false
+                }
+            },
         )
     } catch (exception: Exception) {
         AppDiagnostics.logger.report(
@@ -251,9 +273,4 @@ class RulesActivity : ComponentActivity() {
     companion object {
         private val REQUIRED_SCOPES = setOf(SystemPackages.SYSTEM_SCOPE, SystemPackages.SYSTEM_UI)
     }
-
-    private data class InstalledPackageSnapshot(
-        val names: Set<String>,
-        val available: Boolean,
-    )
 }

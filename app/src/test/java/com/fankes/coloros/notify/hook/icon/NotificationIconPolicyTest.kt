@@ -46,6 +46,25 @@ class NotificationIconPolicyTest {
     }
 
     @Test
+    fun `ColorOS app icon predicate is preserved only by the matching rule-library setting`() {
+        assertTrue(
+            NotificationIconPolicy.shouldKeepHostAppIconBehavior(
+                config(handleOplusPush = false)
+            )
+        )
+        assertFalse(
+            NotificationIconPolicy.shouldKeepHostAppIconBehavior(
+                config(handleOplusPush = true)
+            )
+        )
+        assertFalse(
+            NotificationIconPolicy.shouldKeepHostAppIconBehavior(
+                config(source = PolicyIconSource.DesktopTheme, handleOplusPush = false)
+            )
+        )
+    }
+
+    @Test
     fun `panel gate rejects disabled media and preserved push notifications`() {
         assertFalse(
             NotificationIconPolicy.shouldProcessPanel(
@@ -100,36 +119,36 @@ class NotificationIconPolicyTest {
     }
 
     @Test
-    fun `rule selection covers enabled enabled-all and monochrome behavior`() {
+    fun `rule selection covers enabled enabled-all and mask compatibility`() {
         val cases = listOf(
             RuleCase(
                 ruleEnabled = true,
                 ruleEnabledAll = false,
-                monochrome = false,
+                maskCompatible = false,
                 expected = RuleReplacement.Rule,
             ),
             RuleCase(
                 ruleEnabled = true,
                 ruleEnabledAll = true,
-                monochrome = true,
+                maskCompatible = true,
                 expected = RuleReplacement.Rule,
             ),
             RuleCase(
                 ruleEnabled = true,
                 ruleEnabledAll = false,
-                monochrome = true,
+                maskCompatible = true,
                 expected = RuleReplacement.None,
             ),
             RuleCase(
                 ruleEnabled = false,
                 ruleEnabledAll = true,
-                monochrome = false,
+                maskCompatible = false,
                 expected = RuleReplacement.None,
             ),
             RuleCase(
                 ruleEnabled = false,
                 ruleEnabledAll = false,
-                monochrome = false,
+                maskCompatible = false,
                 expected = RuleReplacement.None,
             ),
         )
@@ -142,21 +161,91 @@ class NotificationIconPolicyTest {
                     config = config(),
                     ruleEnabled = case.ruleEnabled,
                     ruleEnabledAll = case.ruleEnabledAll,
-                    originalIsMonochrome = case.monochrome,
+                    isOplusPush = false,
+                    originalCompatibility = case.maskCompatible.toCompatibility(),
                 ),
             )
         }
     }
 
     @Test
-    fun `placeholder is used only for colored originals in rule-library mode`() {
+    fun `forced rules are selected before the original icon is loaded`() {
+        assertEquals(
+            RuleReplacement.Rule,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(),
+                ruleEnabled = true,
+                ruleEnabledAll = true,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Unchecked,
+            )
+        )
+        assertEquals(
+            RuleReplacement.Rule,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(handleOplusPush = true),
+                ruleEnabled = true,
+                ruleEnabledAll = false,
+                isOplusPush = true,
+                originalCompatibility = OriginalIconCompatibility.Unchecked,
+            )
+        )
+        assertEquals(
+            RuleReplacement.None,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(placeholderEnabled = true),
+                ruleEnabled = true,
+                ruleEnabledAll = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Unchecked,
+            )
+        )
+    }
+
+    @Test
+    fun `handled Oplus push prefers enabled rule over a compatible injected bitmap`() {
+        assertEquals(
+            RuleReplacement.Rule,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(handleOplusPush = true),
+                ruleEnabled = true,
+                ruleEnabledAll = false,
+                isOplusPush = true,
+                originalCompatibility = OriginalIconCompatibility.Compatible,
+            )
+        )
+        assertEquals(
+            RuleReplacement.None,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(handleOplusPush = true),
+                ruleEnabled = false,
+                ruleEnabledAll = false,
+                isOplusPush = true,
+                originalCompatibility = OriginalIconCompatibility.Compatible,
+            )
+        )
+        assertEquals(
+            RuleReplacement.None,
+            NotificationIconPolicy.selectRuleReplacement(
+                config = config(handleOplusPush = false),
+                ruleEnabled = true,
+                ruleEnabledAll = false,
+                isOplusPush = true,
+                originalCompatibility = OriginalIconCompatibility.Compatible,
+            )
+        )
+    }
+
+    @Test
+    fun `placeholder is used only for incompatible originals in rule-library mode`() {
         assertEquals(
             RuleReplacement.Placeholder,
             NotificationIconPolicy.selectRuleReplacement(
                 config = config(placeholderEnabled = true),
                 ruleEnabled = false,
                 ruleEnabledAll = false,
-                originalIsMonochrome = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Incompatible,
             )
         )
         assertEquals(
@@ -165,7 +254,8 @@ class NotificationIconPolicyTest {
                 config = config(placeholderEnabled = true),
                 ruleEnabled = false,
                 ruleEnabledAll = false,
-                originalIsMonochrome = true,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Compatible,
             )
         )
         assertEquals(
@@ -177,7 +267,8 @@ class NotificationIconPolicyTest {
                 ),
                 ruleEnabled = false,
                 ruleEnabledAll = false,
-                originalIsMonochrome = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Incompatible,
             )
         )
         assertEquals(
@@ -186,7 +277,8 @@ class NotificationIconPolicyTest {
                 config = config(rulesEnabled = false, placeholderEnabled = true),
                 ruleEnabled = true,
                 ruleEnabledAll = true,
-                originalIsMonochrome = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Incompatible,
             )
         )
         assertEquals(
@@ -195,30 +287,24 @@ class NotificationIconPolicyTest {
                 config = config(source = PolicyIconSource.DesktopTheme),
                 ruleEnabled = true,
                 ruleEnabledAll = true,
-                originalIsMonochrome = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Incompatible,
             )
         )
     }
 
     @Test
-    fun `disabled rule may fall back to placeholder for a colored original`() {
+    fun `disabled rule may fall back to placeholder for an incompatible original`() {
         assertEquals(
             RuleReplacement.Placeholder,
             NotificationIconPolicy.selectRuleReplacement(
                 config = config(placeholderEnabled = true),
                 ruleEnabled = false,
                 ruleEnabledAll = true,
-                originalIsMonochrome = false,
+                isOplusPush = false,
+                originalCompatibility = OriginalIconCompatibility.Incompatible,
             )
         )
-    }
-
-    @Test
-    fun `original is restored only when host changed a monochrome icon to color`() {
-        assertTrue(NotificationIconPolicy.shouldRestoreOriginal(true, false))
-        assertFalse(NotificationIconPolicy.shouldRestoreOriginal(true, true))
-        assertFalse(NotificationIconPolicy.shouldRestoreOriginal(true, null))
-        assertFalse(NotificationIconPolicy.shouldRestoreOriginal(false, false))
     }
 
     private fun config(
@@ -238,7 +324,14 @@ class NotificationIconPolicyTest {
     private data class RuleCase(
         val ruleEnabled: Boolean,
         val ruleEnabledAll: Boolean,
-        val monochrome: Boolean,
+        val maskCompatible: Boolean,
         val expected: RuleReplacement,
     )
+
+    private fun Boolean.toCompatibility(): OriginalIconCompatibility =
+        if (this) {
+            OriginalIconCompatibility.Compatible
+        } else {
+            OriginalIconCompatibility.Incompatible
+        }
 }

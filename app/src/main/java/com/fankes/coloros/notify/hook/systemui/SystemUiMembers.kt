@@ -14,12 +14,16 @@ import java.lang.reflect.Method
 internal data class StatusBarMembers(
     val updateGrayScale: Method,
     val setIsIconColorable: Method,
+    val setStatusBarIcon: Method,
     val getIconDescriptor: Method,
     val iconManagerIconBuilder: Field,
     val iconBuilderContext: Field,
     val notificationEntryGetSbn: Method,
+    val cloneStatusBarIcon: Method,
     val statusBarIcon: Field,
     val statusBarPreloadedIcon: Field,
+    val statusBarIconType: Field,
+    val peopleAvatarIconType: Any,
 )
 
 internal data class OplusHeaderMembers(
@@ -47,6 +51,12 @@ internal data class RefreshMembers(
     val refreshNotifications: Method?,
 )
 
+internal data class EntryUseAppIconMembers(
+    val predicate: Method,
+    val getBase: Method,
+    val notificationEntryGetSbn: Method,
+)
+
 internal object SystemUiMembers {
 
     fun resolveStatusBar(
@@ -60,6 +70,7 @@ internal object SystemUiMembers {
         val iconBuilder = classes.required(ICON_BUILDER) ?: return null
         val notificationEntry = classes.required(NOTIFICATION_ENTRY) ?: return null
         val statusBarIcon = classes.required(STATUS_BAR_ICON) ?: return null
+        val statusBarIconType = classes.required(STATUS_BAR_ICON_TYPE) ?: return null
 
         fun missing(member: String, signature: String): StatusBarMembers? {
             diagnostics.memberMissing(
@@ -86,6 +97,12 @@ internal object SystemUiMembers {
             Void.TYPE,
             Boolean::class.javaPrimitiveType!!,
         ) ?: return missing("set_colorable", "StatusBarIconView.setIsIconColorable(boolean): void")
+        val setStatusBarIcon = Reflection.findMethodReturning(
+            statusBarIconView,
+            "set",
+            Boolean::class.javaPrimitiveType!!,
+            statusBarIcon,
+        ) ?: return missing("set_icon", "StatusBarIconView.set(StatusBarIcon): boolean")
         val getIconDescriptor = Reflection.findMethodReturning(
             iconManager,
             "getIconDescriptor",
@@ -105,20 +122,34 @@ internal object SystemUiMembers {
             "getSbn",
             StatusBarNotification::class.java,
         ) ?: return missing("get_sbn", "NotificationEntry.getSbn(): StatusBarNotification")
+        val cloneStatusBarIcon = Reflection.findMethodReturning(
+            statusBarIcon,
+            "clone",
+            statusBarIcon,
+        ) ?: return missing("clone_icon", "StatusBarIcon.clone(): StatusBarIcon")
         val statusBarIconField = Reflection.findField(statusBarIcon, "icon", Icon::class.java)
             ?: return missing("icon", "StatusBarIcon.icon: Icon")
         val statusBarPreloadedIcon = Reflection.findField(statusBarIcon, "preloadedIcon", Drawable::class.java)
             ?: return missing("preloaded_icon", "StatusBarIcon.preloadedIcon: Drawable")
+        val statusBarIconTypeField = Reflection.findField(statusBarIcon, "type", statusBarIconType)
+            ?: return missing("icon_type", "StatusBarIcon.type: StatusBarIcon.Type")
+        val peopleAvatarIconType = statusBarIconType.enumConstants
+            ?.firstOrNull { (it as? Enum<*>)?.name == PEOPLE_AVATAR_ICON_TYPE }
+            ?: return missing("people_avatar_type", "StatusBarIcon.Type.PeopleAvatar")
 
         return StatusBarMembers(
             updateGrayScale = updateGrayScale,
             setIsIconColorable = setIsIconColorable,
+            setStatusBarIcon = setStatusBarIcon,
             getIconDescriptor = getIconDescriptor,
             iconManagerIconBuilder = iconManagerIconBuilder,
             iconBuilderContext = iconBuilderContext,
             notificationEntryGetSbn = notificationEntryGetSbn,
+            cloneStatusBarIcon = cloneStatusBarIcon,
             statusBarIcon = statusBarIconField,
             statusBarPreloadedIcon = statusBarPreloadedIcon,
+            statusBarIconType = statusBarIconTypeField,
+            peopleAvatarIconType = peopleAvatarIconType,
         )
     }
 
@@ -306,6 +337,32 @@ internal object SystemUiMembers {
         )
     }
 
+    fun resolveEntryUseAppIcon(classLoader: ClassLoader): EntryUseAppIconMembers? {
+        val entryExtension = loadOptional(OPLUS_NOTIFICATION_ENTRY_EXTENSION, classLoader) ?: return null
+        val pipelineEntry = loadOptional(PIPELINE_ENTRY, classLoader) ?: return null
+        val notificationEntry = loadOptional(NOTIFICATION_ENTRY, classLoader) ?: return null
+        val predicate = Reflection.findMethodReturning(
+            entryExtension,
+            "useAppIconForSmallIcon",
+            Boolean::class.javaPrimitiveType!!,
+        ) ?: return null
+        val getBase = Reflection.findMethodReturning(
+            entryExtension,
+            "getBase",
+            pipelineEntry,
+        ) ?: return null
+        val notificationEntryGetSbn = Reflection.findMethodReturning(
+            notificationEntry,
+            "getSbn",
+            StatusBarNotification::class.java,
+        ) ?: return null
+        return EntryUseAppIconMembers(
+            predicate = predicate,
+            getBase = getBase,
+            notificationEntryGetSbn = notificationEntryGetSbn,
+        )
+    }
+
     private class ClassResolver(
         private val classLoader: ClassLoader,
         private val diagnostics: Diagnostics,
@@ -334,7 +391,13 @@ internal object SystemUiMembers {
     private const val ICON_BUILDER = "com.android.systemui.statusbar.notification.icon.IconBuilder"
     private const val NOTIFICATION_ENTRY =
         "com.android.systemui.statusbar.notification.collection.NotificationEntry"
+    private const val PIPELINE_ENTRY =
+        "com.android.systemui.statusbar.notification.collection.PipelineEntry"
+    private const val OPLUS_NOTIFICATION_ENTRY_EXTENSION =
+        "com.oplus.systemui.statusbar.notification.collection.OplusNotificationEntryExImpl"
     private const val STATUS_BAR_ICON = "com.android.internal.statusbar.StatusBarIcon"
+    private const val STATUS_BAR_ICON_TYPE = "com.android.internal.statusbar.StatusBarIcon\$Type"
+    private const val PEOPLE_AVATAR_ICON_TYPE = "PeopleAvatar"
     private const val EXPANDABLE_ROW =
         "com.android.systemui.statusbar.notification.row.ExpandableNotificationRow"
     private const val NOTIFICATION_VIEW_WRAPPER =

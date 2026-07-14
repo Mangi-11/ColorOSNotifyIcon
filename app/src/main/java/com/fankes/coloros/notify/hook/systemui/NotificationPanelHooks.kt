@@ -71,9 +71,6 @@ internal class NotificationPanelHooks(
         }
     }
 
-    /** Called on the main thread before notifications are refreshed for a new snapshot. */
-    fun onSnapshotPublished() = headerIconClaims.clear()
-
     private fun installOplusHeaderHooks() {
         val oplusHeader = members.oplusHeader ?: return
         installOplusHeaderColorGuard(oplusHeader)
@@ -168,7 +165,6 @@ internal class NotificationPanelHooks(
                 context = icon.context,
                 sbn = sbn,
                 originalSmallIcon = sbn.originalSmallIcon(diagnostics, snapshot.revision),
-                currentDrawable = icon.drawable,
             ) ?: return
 
             icon.applyRenderPlan(plan, target)

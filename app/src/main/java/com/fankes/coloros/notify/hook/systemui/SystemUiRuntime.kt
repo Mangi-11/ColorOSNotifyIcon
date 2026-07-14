@@ -1,5 +1,6 @@
 package com.fankes.coloros.notify.hook.systemui
 
+import android.service.notification.StatusBarNotification
 import com.fankes.coloros.notify.diagnostics.Diagnostics
 import com.fankes.coloros.notify.hook.HookRegistrar
 import com.fankes.coloros.notify.hook.icon.OplusIconConfigurationReader
@@ -26,13 +27,9 @@ internal class SystemUiRuntime(
             iconConfiguration = iconConfiguration,
         )
         var refreshBridge: NotificationRefreshBridge? = null
-        var panelHooks: NotificationPanelHooks? = null
 
         // Register before reflection discovery so no committed revision can be missed during setup.
         configuration.start { snapshot ->
-            panelHooks?.let { panel ->
-                runPublishedTask(snapshot, "panel_cleanup", panel::onSnapshotPublished)
-            }
             refreshBridge?.let { refresh ->
                 runPublishedTask(snapshot, "notification_refresh") {
                     refresh.refresh(snapshot.revision)
@@ -49,12 +46,50 @@ internal class SystemUiRuntime(
         }
 
         installFeature("use_app_icon") {
-            SystemUiMembers.resolveUseAppIcon(classLoader)?.let { method ->
-                hooks.install(method, "systemui.useAppIconForSmallIcon") { false }
+            val utilityPredicate = SystemUiMembers.resolveUseAppIcon(classLoader)
+            utilityPredicate?.let { method ->
+                hooks.install(method, "systemui.useAppIconForSmallIcon") { chain ->
+                    if (configuration.snapshot.resolver.shouldKeepHostAppIconBehavior()) {
+                        chain.proceed()
+                    } else {
+                        false
+                    }
+                }
             } ?: diagnostics.memberMissing(
                 scope = "systemui:use_app_icon",
-                message = "未找到 useAppIconForSmallIcon(Notification): boolean，跳过 ColorOS 应用图标抑制",
+                message = "未找到 useAppIconForSmallIcon(Notification): boolean，跳过 ColorOS 应用图标策略",
             )
+
+            val entryMembers = SystemUiMembers.resolveEntryUseAppIcon(classLoader)
+            if (utilityPredicate != null && entryMembers != null) {
+                hooks.install(
+                    entryMembers.predicate,
+                    "systemui.useAppIconForSmallIcon.entry",
+                ) { chain ->
+                    val extension = chain.thisObject ?: return@install chain.proceed()
+                    val currentResult = try {
+                        val entry = entryMembers.getBase.invoke(extension)
+                        val sbn = entry?.let {
+                            entryMembers.notificationEntryGetSbn.invoke(it) as? StatusBarNotification
+                        }
+                        utilityPredicate.invoke(null, sbn?.notification) as? Boolean
+                    } catch (exception: Exception) {
+                        diagnostics.runtimeFailure(
+                            scope = "systemui:use_app_icon:entry",
+                            message = "读取通知当前应用图标策略失败，交回 ColorOS 缓存结果",
+                            cause = exception,
+                            revision = configuration.snapshot.revision,
+                        )
+                        null
+                    }
+                    currentResult ?: chain.proceed()
+                }
+            } else {
+                diagnostics.memberMissing(
+                    scope = "systemui:use_app_icon:entry",
+                    message = "未找到 OplusNotificationEntryExImpl 应用图标判定成员，现有通知可能等待自然更新",
+                )
+            }
         }
 
         installFeature("status_bar") {
@@ -69,12 +104,12 @@ internal class SystemUiRuntime(
 
         installFeature("panel") {
             SystemUiMembers.resolvePanel(classLoader, diagnostics)?.let { members ->
-                panelHooks = NotificationPanelHooks(
+                NotificationPanelHooks(
                     hooks = hooks,
                     diagnostics = diagnostics,
                     configuration = configuration,
                     members = members,
-                ).also(NotificationPanelHooks::install)
+                ).install()
             }
         }
     }
