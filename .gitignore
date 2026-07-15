@@ -109,7 +109,11 @@ build/
 .tmp*
 
 # Local third-party source snapshots for AI/reference use
-/third_party/
+/third_party/*
+!/third_party/material-design-icons/
+/third_party/material-design-icons/*
+!/third_party/material-design-icons/LICENSE
+!/third_party/material-design-icons/NOTICE
 
 # Local signing materials
 /.secret/
