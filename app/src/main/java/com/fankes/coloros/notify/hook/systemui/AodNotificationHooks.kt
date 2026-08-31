@@ -80,10 +80,13 @@ internal class AodNotificationHooks(
             val key = chain.args.getOrNull(0) as? String
             val packageName = chain.args.getOrNull(1) as? String
             val context = appContext()
-            if (context != null) {
-                resolveReplacementDrawable(context, key, packageName)?.let { chain.args[2] = it }
+            // Chain.getArgs() is immutable; only build a new array when a replacement exists.
+            val replacement = context?.let { resolveReplacementDrawable(it, key, packageName) }
+            if (replacement != null) {
+                chain.proceed(chain.args.toTypedArray().also { it[2] = replacement })
+            } else {
+                chain.proceed()
             }
-            chain.proceed()
         }
     }
 

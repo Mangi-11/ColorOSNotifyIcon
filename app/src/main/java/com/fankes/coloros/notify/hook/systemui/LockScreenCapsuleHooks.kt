@@ -46,6 +46,8 @@ internal class LockScreenCapsuleHooks(
                 if (!lockScreenCapsuleEnabled()) return@install chain.proceed()
                 if (isMediaPlayerArg(chain.args.getOrNull(7))) return@install chain.proceed()
                 val context = appContext() ?: return@install chain.proceed()
+                // Chain.getArgs() is immutable; collect the replacements and hand them to proceed().
+                var patchedArgs: Array<Any?>? = null
                 patchNotificationIconData(
                     context = context,
                     iconData = null,
@@ -53,12 +55,18 @@ internal class LockScreenCapsuleHooks(
                     packageName = chain.args.getOrNull(1) as? String,
                     entry = chain.args.getOrNull(6),
                     onPatched = { drawable, icon ->
-                        chain.args[2] = drawable
-                        chain.args[3] = icon
-                        chain.args[5] = null
+                        patchedArgs = chain.args.toTypedArray().also {
+                            it[2] = drawable
+                            it[3] = icon
+                            it[5] = null
+                        }
                     },
                 )
-                chain.proceed()
+                // Do not use `?.let { } ?: `: proceed() legitimately returns null (constructors,
+                // void methods), which would fall through and invoke the target a second time.
+                // Copy to a local val — a captured var cannot be smart-cast to non-null.
+                val finalArgs = patchedArgs
+                if (finalArgs != null) chain.proceed(finalArgs) else chain.proceed()
             }
         }
     }
@@ -158,16 +166,21 @@ internal class LockScreenCapsuleHooks(
                 ?: return@install chain.proceed()
             if (!isLockScreenIslandIconView(iconView)) return@install chain.proceed()
             val originalCallback = chain.args.getOrNull(5) as? Function1<Any?, Unit>
-            if (originalCallback != null) {
-                chain.args[5] = object : Function1<Any?, Unit> {
+            val result = if (originalCallback != null) {
+                // Chain.getArgs() is immutable; wrap the callback in a fresh argument array.
+                val newArgs = chain.args.toTypedArray()
+                newArgs[5] = object : Function1<Any?, Unit> {
                     override fun invoke(result: Any?) {
                         originalCallback.invoke(result)
                         iconView.post { overrideGroupIconColor(iconView, entry) }
                     }
                 }
+                chain.proceed(newArgs)
+            } else {
+                chain.proceed()
             }
-            chain.proceed()
             iconView.post { overrideGroupIconColor(iconView, entry) }
+            result
         }
     }
 

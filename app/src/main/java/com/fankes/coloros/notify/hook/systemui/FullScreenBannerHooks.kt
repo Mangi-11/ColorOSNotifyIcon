@@ -101,14 +101,21 @@ internal class FullScreenBannerHooks(
             } else {
                 null
             }
-            if (plan != null) {
-                chain.args[0] = plan.drawable
-                val avatar = chain.args.getOrNull(2) as? Drawable
-                if (avatar != null) {
-                    chain.args[2] = plan.drawable.constantState?.newDrawable()?.mutate() ?: plan.drawable
+            // Chain.getArgs() is immutable; build a fresh argument array when a plan applies.
+            val newArgs = if (plan != null) {
+                chain.args.toTypedArray().also {
+                    it[0] = plan.drawable
+                    val avatar = chain.args.getOrNull(2) as? Drawable
+                    if (avatar != null) {
+                        it[2] = plan.drawable.constantState?.newDrawable()?.mutate() ?: plan.drawable
+                    }
                 }
+            } else {
+                null
             }
-            val result = chain.proceed()
+            // Do not use `?.let { } ?: `: proceed() legitimately returns null (void setters),
+            // which would fall through and invoke the target a second time.
+            val result = if (newArgs != null) chain.proceed(newArgs) else chain.proceed()
             if (plan != null) {
                 schedulePanelRenderPlan(banner, plan)
             } else if (context != null && entry != null) {
@@ -124,10 +131,12 @@ internal class FullScreenBannerHooks(
             val context = (chain.thisObject as? View)?.context
             val entry = lastEntry ?: return@install chain.proceed()
             val plan = context?.let { resolvePanelPlan(it, entry) }
+            // Chain.getArgs() is immutable; pass the replacement through proceed().
             if (plan != null) {
-                chain.args[0] = backgroundDrawable(plan.drawable)
+                chain.proceed(chain.args.toTypedArray().also { it[0] = backgroundDrawable(plan.drawable) })
+            } else {
+                chain.proceed()
             }
-            chain.proceed()
         }
     }
 
