@@ -14,7 +14,6 @@ import com.fankes.coloros.notify.hook.HookRegistrar
 import com.fankes.coloros.notify.hook.runtimeFailure
 import java.util.Collections
 import java.util.WeakHashMap
-import kotlin.jvm.functions.Function1
 
 /**
  * ColorOS 16 lock-screen notification capsule (bottom pill between shortcuts).
@@ -157,13 +156,9 @@ internal class LockScreenCapsuleHooks(
             val iconView = chain.args.getOrNull(1) as? ImageView
                 ?: return@install chain.proceed()
             if (!isLockScreenIslandIconView(iconView)) return@install chain.proceed()
-            val originalCallback = chain.args.getOrNull(5) as? Function1<Any?, Unit>
-            if (originalCallback != null) {
-                chain.args[5] = object : Function1<Any?, Unit> {
-                    override fun invoke(result: Any?) {
-                        originalCallback.invoke(result)
-                        iconView.post { overrideGroupIconColor(iconView, entry) }
-                    }
+            chain.args.getOrNull(5)?.let { originalCallback ->
+                chain.args[5] = wrapHostCallback(method.parameterTypes[5], originalCallback) {
+                    iconView.post { overrideGroupIconColor(iconView, entry) }
                 }
             }
             chain.proceed()

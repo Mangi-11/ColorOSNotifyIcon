@@ -113,6 +113,27 @@ internal class NotificationPanelHooks(
             }
         }
 
+        // ColorOS 17: the summary glyph lives in OplusGroupNotificationRowIconView; the host only
+        // colors the pill here, then its callback paints a round background onto the icon view.
+        members.groupIconInitEntryIconDrawable?.let { method ->
+            hooks.install(method, "systemui.panel.group.initEntryIconDrawable") { chain ->
+                if (chain.args.getOrNull(4) as? Boolean != false) return@install chain.proceed()
+                val snapshot = configuration.snapshot
+                if (!snapshot.config.panelIconReplacementEnabled) return@install chain.proceed()
+                val entry = chain.args.getOrNull(0) ?: return@install chain.proceed()
+                val iconView = chain.args.getOrNull(1) as? ImageView
+                    ?: return@install chain.proceed()
+                chain.args.getOrNull(5)?.let { originalCallback ->
+                    chain.args[5] = wrapHostCallback(method.parameterTypes[5], originalCallback) {
+                        applyGroupSummaryIcon(iconView, entry, snapshot)
+                    }
+                }
+                val result = chain.proceed()
+                applyGroupSummaryIcon(iconView, entry, snapshot)
+                result
+            }
+        }
+
         members.groupIconInitPillBgAndNumberColor?.let { method ->
             hooks.install(method, "systemui.panel.group.initPillBgAndNumberColor") { chain ->
                 val snapshot = configuration.snapshot
@@ -252,6 +273,26 @@ internal class NotificationPanelHooks(
         } catch (exception: Exception) {
             diagnostics.runtimeFailure(
                 scope = "panel:replace_icon:${target.diagnosticName}",
+                message = "通知面板规则图标注入失败，保留 ColorOS 原结果",
+                cause = exception,
+                revision = snapshot.revision,
+            )
+        }
+    }
+
+    private fun applyGroupSummaryIcon(iconView: ImageView, entry: Any, snapshot: RuntimeSnapshot) {
+        if (!configuration.isCurrent(snapshot)) return
+        try {
+            val sbn = members.notificationEntryGetSbn.invoke(entry) as? StatusBarNotification ?: return
+            val plan = snapshot.resolver.resolvePanelIconPlan(
+                context = iconView.context,
+                sbn = sbn,
+                originalSmallIcon = sbn.originalSmallIcon(diagnostics, snapshot.revision),
+            ) ?: return
+            iconView.applyRenderPlan(plan, PanelIconTarget.OplusGroupSummary)
+        } catch (exception: Exception) {
+            diagnostics.runtimeFailure(
+                scope = "panel:replace_icon:${PanelIconTarget.OplusGroupSummary.diagnosticName}",
                 message = "通知面板规则图标注入失败，保留 ColorOS 原结果",
                 cause = exception,
                 revision = snapshot.revision,

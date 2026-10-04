@@ -50,6 +50,7 @@ internal data class PanelMembers(
     val oplusGroupGetIconView: Method?,
     val groupIconInitIconViewColor: Method?,
     val groupIconInitPillBgAndNumberColor: Method?,
+    val groupIconInitEntryIconDrawable: Method?,
     val notificationEntryGetKey: Method?,
 )
 
@@ -114,6 +115,7 @@ internal data class FullScreenBannerMembers(
     val bannerSetIcon: Method?,
     val builderIcon: Field?,
     val builderAvatarIcon: Field?,
+    val builderLargeIconWithBadge: Field?,
     val lastNotificationEntry: Field?,
     val helperContext: Field?,
     val helperFullScreenBanner: Field?,
@@ -313,15 +315,6 @@ internal object SystemUiMembers {
         val oplusGroupGetIconView = oplusGroupWrapper?.let {
             Reflection.findMethodReturning(it, "getIconView", ImageView::class.java)
         }
-        if (
-            oplusGroupWrapper == null ||
-            (oplusGroupInitIcon == null && oplusGroupResolveHeaderViews == null)
-        ) {
-            diagnostics.memberMissing(
-                scope = "systemui:panel:oplus_group",
-                message = "Oplus 聚合摘要成员签名不完整，跳过聚合摘要图标路径",
-            )
-        }
 
         val groupIconManager = classes.optional(GROUP_ICON_MANAGER)
         val iconInfoClass = classes.optional(GROUP_ICON_INFO)
@@ -354,12 +347,43 @@ internal object SystemUiMembers {
         } else {
             null
         }
+        // ColorOS 17 dropped OplusNotificationGroupTemplateWrapper and initIconViewColor; the
+        // collapsed summary icon is OplusGroupNotificationRowIconView, fed through this entry.
+        val hostFunction1 = classes.optional(KOTLIN_FUNCTION1)
+        val groupIconInitEntryIconDrawable = if (
+            groupIconManager != null && cachingIconView != null && hostFunction1 != null
+        ) {
+            Reflection.findMethodReturning(
+                groupIconManager,
+                "initEntryIconDrawable",
+                Void.TYPE,
+                notificationEntry,
+                cachingIconView,
+                android.widget.TextView::class.java,
+                FrameLayout::class.java,
+                Boolean::class.javaPrimitiveType!!,
+                hostFunction1,
+            )
+        } else {
+            null
+        }
         val notificationEntryGetKey = Reflection.findMethodReturning(
             notificationEntry,
             "getKey",
             String::class.java,
         )
-        if (groupIconInitIconViewColor == null || groupIconInitPillBgAndNumberColor == null) {
+        val hasLegacyGroupPath = oplusGroupWrapper != null &&
+            (oplusGroupInitIcon != null || oplusGroupResolveHeaderViews != null)
+        if (!hasLegacyGroupPath && groupIconInitEntryIconDrawable == null) {
+            diagnostics.memberMissing(
+                scope = "systemui:panel:oplus_group",
+                message = "Oplus 聚合摘要成员签名不完整，跳过聚合摘要图标路径",
+            )
+        }
+        if (
+            (groupIconInitIconViewColor == null && groupIconInitEntryIconDrawable == null) ||
+            groupIconInitPillBgAndNumberColor == null
+        ) {
             diagnostics.memberMissing(
                 scope = "systemui:panel:group_icon_manager",
                 message = "GroupIconManager 着色成员不完整，折叠分组可能仍按宿主取色绘制色块",
@@ -428,6 +452,7 @@ internal object SystemUiMembers {
             oplusGroupGetIconView = oplusGroupGetIconView,
             groupIconInitIconViewColor = groupIconInitIconViewColor,
             groupIconInitPillBgAndNumberColor = groupIconInitPillBgAndNumberColor,
+            groupIconInitEntryIconDrawable = groupIconInitEntryIconDrawable,
             notificationEntryGetKey = notificationEntryGetKey,
         )
     }
@@ -626,9 +651,12 @@ internal object SystemUiMembers {
         } else {
             null
         }
+        // SystemUI bundles its own Kotlin stdlib; the module's Function1 is a different class.
+        val hostFunction1 = loadOptional(KOTLIN_FUNCTION1, classLoader)
         val groupIconInitEntryIconDrawable = if (
             groupIconManager != null &&
-            cachingIconView != null
+            cachingIconView != null &&
+            hostFunction1 != null
         ) {
             Reflection.findMethodReturning(
                 groupIconManager,
@@ -639,7 +667,7 @@ internal object SystemUiMembers {
                 android.widget.TextView::class.java,
                 FrameLayout::class.java,
                 Boolean::class.javaPrimitiveType!!,
-                kotlin.jvm.functions.Function1::class.java,
+                hostFunction1,
             )
         } else {
             null
@@ -666,7 +694,11 @@ internal object SystemUiMembers {
                 message = "未找到 CapsuleNotificationCardView.getRoundedIcon，单条锁屏胶囊可能仍显示默认图标",
             )
         }
-        if (groupIconInitCapsuleIconColor == null && groupIconAccessInitCapsuleIconColor == null) {
+        if (
+            groupIconInitCapsuleIconColor == null &&
+            groupIconAccessInitCapsuleIconColor == null &&
+            groupIconInitEntryIconDrawable == null
+        ) {
             diagnostics.memberMissing(
                 scope = "systemui:lockscreen:capsule:group_icon",
                 message = "未找到 GroupIconManager 锁屏胶囊着色入口，聚合锁屏胶囊可能仍显示灰色",
@@ -850,7 +882,17 @@ internal object SystemUiMembers {
         val updateBanner = builder?.let {
             Reflection.findMethodReturning(banner, "updateBanner", Void.TYPE, it)
         }
+        // ColorOS 17 appends largeIconWithBadge: setIcon(Drawable, boolean, Drawable, boolean, Drawable).
         val bannerSetIcon = Reflection.findMethodReturning(
+            banner,
+            "setIcon",
+            Void.TYPE,
+            Drawable::class.java,
+            Boolean::class.javaPrimitiveType!!,
+            Drawable::class.java,
+            Boolean::class.javaPrimitiveType!!,
+            Drawable::class.java,
+        ) ?: Reflection.findMethodReturning(
             banner,
             "setIcon",
             Void.TYPE,
@@ -864,6 +906,9 @@ internal object SystemUiMembers {
         }
         val builderAvatarIcon = builder?.let {
             Reflection.findField(it, "mAvatarIcon", Drawable::class.java)
+        }
+        val builderLargeIconWithBadge = builder?.let {
+            Reflection.findField(it, "mLargeIconWithBadge", Drawable::class.java)
         }
         val lastNotificationEntry = Reflection.findField(
             helper,
@@ -900,7 +945,7 @@ internal object SystemUiMembers {
         if (bannerSetIcon == null) {
             diagnostics.memberMissing(
                 scope = "systemui:fullscreen_banner:set_icon",
-                message = "未找到 FullScreenBanner.setIcon(Drawable, boolean, Drawable, boolean)",
+                message = "未找到 FullScreenBanner.setIcon(Drawable, boolean, Drawable, boolean[, Drawable])",
             )
         }
 
@@ -912,6 +957,7 @@ internal object SystemUiMembers {
             bannerSetIcon = bannerSetIcon,
             builderIcon = builderIcon,
             builderAvatarIcon = builderAvatarIcon,
+            builderLargeIconWithBadge = builderLargeIconWithBadge,
             lastNotificationEntry = lastNotificationEntry,
             helperContext = helperContext,
             helperFullScreenBanner = helperFullScreenBanner,
@@ -996,6 +1042,7 @@ internal object SystemUiMembers {
     private const val GROUP_ICON_INFO =
         "com.oplus.systemui.notification.row.oplusgroup.GroupIconManager\$IconInfo"
     private const val CACHING_ICON_VIEW = "com.android.internal.widget.CachingIconView"
+    private const val KOTLIN_FUNCTION1 = "kotlin.jvm.functions.Function1"
     private const val OPLUS_HEADER_EXTENSION =
         "com.oplus.systemui.statusbar.notification.row.wrapper.OplusNotificationHeaderViewWrapperExImp"
     private const val VIEW_CONFIG_COORDINATOR =
