@@ -18,7 +18,7 @@ android {
     compileSdk = gropify.project.android.compileSdk
 
     signingConfigs {
-        val snapshot by creating {
+        create("snapshot") {
             keyAlias = gropify.project.app.signing.keyAlias
             keyPassword = gropify.project.app.signing.keyPassword
             storeFile = rootProject.file(gropify.project.app.signing.storeFilePath)
@@ -94,6 +94,5 @@ dependencies {
     implementation(libs.miuix.preference.android)
     implementation(libs.miuix.blur.android)
     implementation(libs.miuix.nav.android)
-    implementation(libs.miuix.squircle.android)
     testImplementation(libs.junit)
 }
